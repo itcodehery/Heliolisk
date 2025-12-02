@@ -11,3 +11,6 @@ A Terminal Modal Text Editor currently being built in Rust
 - Representing Data in Structs
 - Fully Human-driven Development (to see how far I can push without AI)
 - Learning and Implementing new Data Structures
+
+# UI
+- Frontend is implemented in Ratatui instead of Raw Terminal UI
