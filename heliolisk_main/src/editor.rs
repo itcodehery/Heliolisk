@@ -126,6 +126,7 @@ impl<S> Editor<S> {
     }
 
     fn move_cursor_up(&mut self) {
+        todo!("Panics for some reason. Fix this!");
         if self.cursor_line > 0 {
             self.cursor_line -= 1;
             self.clamp_cursor_col();
@@ -133,6 +134,7 @@ impl<S> Editor<S> {
     }
 
     fn move_cursor_down(&mut self) {
+        todo!("Panics for some reason. Fix this!");
         let buffer = &self.buffers[self.current_focused_index];
         if self.cursor_line < buffer.line_count() - 1 {
             self.cursor_line += 1;
@@ -147,6 +149,11 @@ impl<S> Editor<S> {
             self.cursor_col = line_len;
         }
     }
+
+    pub fn get_command_line(&self) -> String {
+        let string = ":".to_string() + &self.command_line.clone();
+        string
+    }
 }
 
 impl Editor<NavigateMode> {
@@ -155,7 +162,7 @@ impl Editor<NavigateMode> {
         match key.code {
             Char('i') => action = EditorAction::EnterEditMode,
             Char(':') => action = EditorAction::EnterCommandMode,
-            Char('v') => action = EditorAction::EnterEditMode,
+            Char('v') => action = EditorAction::EnterSelectMode,
             Char('h') => self.move_cursor_left(),
             Char('l') => self.move_cursor_right(),
             Char('k') => self.move_cursor_up(),
@@ -246,6 +253,10 @@ impl Editor<SelectMode> {
         self.transition()
     }
 
+    pub fn enter_edit_mode(self) -> Editor<EditMode> {
+        self.transition()
+    }
+
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
         match key.code {
             KeyCode::Esc => EditorAction::EnterNavigateMode,
@@ -285,7 +296,7 @@ impl Editor<CommandMode> {
 
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
         match key.code {
-            KeyCode::Esc => EditorAction::Quit,
+            KeyCode::Esc => EditorAction::EnterNavigateMode,
             KeyCode::Char(c) => {
                 self.command_line.push(c);
                 EditorAction::None
