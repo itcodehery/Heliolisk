@@ -6,12 +6,10 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::event::{Event::Key, KeyCode::Char, read};
 
 // States of the Document
-#[allow(dead_code)]
 pub struct NavigateMode;
-#[allow(dead_code)]
 pub struct EditMode;
-#[allow(dead_code)]
 pub struct SelectMode;
+pub struct CommandMode;
 
 #[allow(dead_code)]
 pub struct Editor<State = NavigateMode> {
@@ -32,10 +30,6 @@ impl Editor {
         }
     }
 
-    pub fn quit() {
-        todo!("Implement Changes check");
-    }
-
     pub fn buffer_switch_forward() {
         todo!("Implement switching between buffers in forwards order");
     }
@@ -54,6 +48,7 @@ impl Editor {
                         Char(c) => {
                             if c == 'q' {
                                 break;
+                            } else if c == ':' {
                             }
                         }
                         _ => (),
@@ -64,5 +59,52 @@ impl Editor {
             }
         }
         disable_raw_mode().unwrap();
+    }
+}
+
+impl<S> Editor<S> {
+    fn transition<NewState>(self) -> Editor<NewState> {
+        Editor {
+            buffers: self.buffers,
+            current_focused_index: self.current_focused_index,
+            is_quittable: self.is_quittable,
+            state: PhantomData,
+        }
+    }
+}
+
+impl Editor<NavigateMode> {
+    pub fn enter_edit_mode(self) -> Editor<EditMode> {
+        self.transition()
+    }
+
+    pub fn enter_command_mode(self) -> Editor<CommandMode> {
+        self.transition()
+    }
+}
+
+impl Editor<EditMode> {
+    pub fn enter_navigate_mode(self) -> Editor<NavigateMode> {
+        self.transition()
+    }
+
+    pub fn enter_select_mode(self) -> Editor<SelectMode> {
+        self.transition()
+    }
+}
+
+impl Editor<SelectMode> {
+    pub fn enter_navigate_mode(self) -> Editor<NavigateMode> {
+        self.transition()
+    }
+
+    pub fn enter_command_mode(self) -> Editor<CommandMode> {
+        self.transition()
+    }
+}
+
+impl Editor<CommandMode> {
+    pub fn enter_navigate_mode(self) -> Editor<NavigateMode> {
+        self.transition()
     }
 }
