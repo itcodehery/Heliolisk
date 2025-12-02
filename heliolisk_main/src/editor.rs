@@ -1,9 +1,9 @@
 use crate::Buffer;
 use std::marker::PhantomData;
 
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::event::{KeyCode, KeyEvent};
 
-use crossterm::event::{Event::Key, KeyCode::Char, read};
+use crossterm::event::KeyCode::Char;
 
 // States of the Document
 pub struct NavigateMode;
@@ -11,55 +11,66 @@ pub struct EditMode;
 pub struct SelectMode;
 pub struct CommandMode;
 
-#[allow(dead_code)]
 pub struct Editor<State = NavigateMode> {
     buffers: Vec<Buffer>,
-    current_focused_index: i32,
+    current_focused_index: usize,
+    cursor_col: usize,
+    cursor_line: usize,
     is_quittable: bool,
+    command_line: String,
     state: PhantomData<State>,
 }
 
-#[allow(dead_code)]
+pub enum EditorAction {
+    Quit,
+    Save,
+    SaveAndQuit,
+    QuitAll,
+    EnterCommandMode,
+    EnterEditMode,
+    EnterSelectMode,
+    EnterNavigateMode,
+    None,
+}
+
 impl Editor {
     pub fn new(buffers: Vec<Buffer>) -> Self {
         Self {
             buffers,
             current_focused_index: 0,
             is_quittable: true,
+            cursor_line: 0,
+            cursor_col: 0,
+            command_line: String::new(),
             state: PhantomData::<NavigateMode>,
         }
     }
 
-    pub fn buffer_switch_forward() {
-        todo!("Implement switching between buffers in forwards order");
-    }
-
-    pub fn buffer_switch_backward() {
-        todo!("Implement switching between buffers in backwards order");
-    }
-
-    pub fn render(&self) {
-        enable_raw_mode().unwrap();
-        loop {
-            match read() {
-                Ok(Key(event)) => {
-                    println!("{:?}\r", event);
-                    match event.code {
-                        Char(c) => {
-                            if c == 'q' {
-                                break;
-                            } else if c == ':' {
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-                Err(err) => println!("Error: {}", err),
-                _ => (),
+    pub fn buffer_switch_forward(&mut self) {
+        if self.buffers.len() < 2 {
+            return;
+        } else {
+            if self.current_focused_index + 1 == self.buffers.len() {
+                self.current_focused_index = 0;
+            } else {
+                self.current_focused_index += 1;
             }
         }
-        disable_raw_mode().unwrap();
     }
+
+    pub fn buffer_switch_backward(&mut self) {
+        if self.buffers.len() < 2 {
+            return;
+        } else {
+            if self.current_focused_index == 0 {
+                self.current_focused_index = self.buffers.len();
+            } else {
+                self.current_focused_index -= 1;
+            }
+        }
+    }
+
+    pub fn quit(&self) {}
 }
 
 impl<S> Editor<S> {
@@ -68,17 +79,78 @@ impl<S> Editor<S> {
             buffers: self.buffers,
             current_focused_index: self.current_focused_index,
             is_quittable: self.is_quittable,
+            cursor_col: self.cursor_col,
+            cursor_line: self.cursor_line,
+            command_line: self.command_line,
             state: PhantomData,
         }
     }
 }
 
 impl Editor<NavigateMode> {
+    pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
+        let mut action = EditorAction::None;
+        match key.code {
+            Char('i') => action = EditorAction::EnterEditMode,
+            Char(':') => action = EditorAction::EnterCommandMode,
+            Char('v') => action = EditorAction::EnterEditMode,
+            Char('h') => self.move_cursor_left(),
+            Char('l') => self.move_cursor_right(),
+            Char('k') => self.move_cursor_up(),
+            Char('j') => self.move_cursor_down(),
+            KeyCode::Tab => self.buffer_switch_forward(),
+            KeyCode::BackTab => self.buffer_switch_backward(),
+            _ => {}
+        }
+        action
+    }
+
+    fn move_cursor_left(&mut self) {
+        if self.cursor_col > 0 {
+            self.cursor_col -= 1;
+        }
+    }
+
+    fn move_cursor_right(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        let line_len = buffer.line_length(self.cursor_line);
+        if self.cursor_col < line_len {
+            self.cursor_col += 1;
+        }
+    }
+
+    fn move_cursor_up(&mut self) {
+        if self.cursor_line > 0 {
+            self.cursor_line -= 1;
+            self.clamp_cursor_col();
+        }
+    }
+
+    fn move_cursor_down(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        if self.cursor_line < buffer.line_count() - 1 {
+            self.cursor_line += 1;
+            self.clamp_cursor_col();
+        }
+    }
+
+    fn clamp_cursor_col(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        let line_len = buffer.line_length(self.cursor_line);
+        if self.cursor_col > line_len {
+            self.cursor_col = line_len;
+        }
+    }
+
     pub fn enter_edit_mode(self) -> Editor<EditMode> {
         self.transition()
     }
 
     pub fn enter_command_mode(self) -> Editor<CommandMode> {
+        self.transition()
+    }
+
+    pub fn enter_select_mode(self) -> Editor<SelectMode> {
         self.transition()
     }
 }
@@ -91,6 +163,50 @@ impl Editor<EditMode> {
     pub fn enter_select_mode(self) -> Editor<SelectMode> {
         self.transition()
     }
+
+    pub fn move_cursor_left(&mut self) {
+        if self.cursor_col > 0 {
+            self.cursor_col -= 1;
+        }
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        let line_len = buffer.line_length(self.cursor_line);
+        if self.cursor_col < line_len {
+            self.cursor_col += 1;
+        }
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        let buffer = &mut self.buffers[self.current_focused_index as usize];
+        buffer.insert_char(self.cursor_line, self.cursor_col, c);
+        self.cursor_col += 1;
+    }
+
+    pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
+        match key.code {
+            KeyCode::Esc => EditorAction::EnterNavigateMode,
+            KeyCode::Char(c) => {
+                self.insert_char(c);
+                EditorAction::None
+            }
+            KeyCode::Backspace => {
+                self.delete_char();
+                EditorAction::None
+            }
+            KeyCode::Delete => {
+                self.delete_char();
+                EditorAction::None
+            }
+            _ => EditorAction::None,
+        }
+    }
+
+    pub fn delete_char(&mut self) {
+        let buffer = &mut self.buffers[self.current_focused_index];
+        buffer.delete_char(self.cursor_line, self.cursor_col);
+    }
 }
 
 impl Editor<SelectMode> {
@@ -101,10 +217,59 @@ impl Editor<SelectMode> {
     pub fn enter_command_mode(self) -> Editor<CommandMode> {
         self.transition()
     }
+
+    pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
+        match key.code {
+            KeyCode::Esc => EditorAction::EnterNavigateMode,
+            KeyCode::Char(c) => {
+                if c == 'i' {
+                    return EditorAction::EnterEditMode;
+                } else if c == ':' {
+                    return EditorAction::EnterCommandMode;
+                }
+                EditorAction::None
+            }
+            _ => EditorAction::None,
+        }
+    }
 }
 
 impl Editor<CommandMode> {
     pub fn enter_navigate_mode(self) -> Editor<NavigateMode> {
         self.transition()
+    }
+
+    pub fn clear_command_line(&mut self) {
+        self.command_line.clear();
+    }
+
+    pub fn execute_command(&mut self, cmd: &str) -> EditorAction {
+        self.clear_command_line();
+        match cmd {
+            "q" => EditorAction::Quit,
+            "w" => EditorAction::Save,
+            "wq" => EditorAction::SaveAndQuit,
+            "qa" => EditorAction::QuitAll,
+            _ => EditorAction::None,
+        }
+    }
+
+    pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
+        match key.code {
+            KeyCode::Esc => EditorAction::Quit,
+            KeyCode::Char(c) => {
+                self.command_line.push(c);
+                EditorAction::None
+            }
+            KeyCode::Backspace => {
+                self.command_line.pop();
+                EditorAction::None
+            }
+            KeyCode::Enter => {
+                let cmd = self.command_line.clone();
+                self.execute_command(&cmd)
+            }
+            _ => EditorAction::None,
+        }
     }
 }
