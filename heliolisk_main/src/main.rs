@@ -1,52 +1,37 @@
 mod buffer;
 mod editor;
-
-use crossterm::{
-    event::{KeyEvent, read},
-    terminal::{disable_raw_mode, enable_raw_mode},
-};
+mod helios;
 
 use crate::{
     buffer::Buffer,
-    editor::{Editor, NavigateMode},
+    editor::{CommandMode, EditMode, Editor, NavigateMode, SelectMode},
+    helios::{Helios, initialize_app},
 };
+use color_eyre::Result;
 
-fn main() {
-    enable_raw_mode().unwrap();
-    let mut alpha_buffer = Buffer::new();
-    let mut editor = Editor::<NavigateMode>::new(vec![alpha_buffer]);
+pub enum EditorState {
+    Navigate(Editor<NavigateMode>),
+    Edit(Editor<EditMode>),
+    Select(Editor<SelectMode>),
+    Command(Editor<CommandMode>),
+}
 
-    loop {
-        // editor.render();
-
-        match read() {
-            Ok(Key(event)) => {
-                let action = editor.handle_input(event);
-                match action {
-                    EditorAction::Quit => break,
-                    EditorAction::SaveAndQuit => {
-                        // save logic
-                        break;
-                    }
-                    EditorAction::EnterCommandMode => {
-                        editor = editor.enter_command_mode();
-                    }
-                    EditorAction::ExitCommandMode => {
-                        editor = editor.exit_command_mode();
-                    }
-                    EditorAction::EnterEditMode => {
-                        editor = editor.enter_edit_mode();
-                    }
-                    EditorAction::ExitEditMode => {
-                        editor = editor.exit_edit_mode();
-                    }
-                    EditorAction::None => {}
-                }
-            }
-            Err(err) => println!("Error: {}", err),
-            _ => (),
+impl std::fmt::Display for EditorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditorState::Navigate(_) => f.write_str("Navigate"),
+            EditorState::Edit(_) => f.write_str("Edit"),
+            EditorState::Select(_) => f.write_str("Select"),
+            EditorState::Command(_) => f.write_str("Command"),
         }
     }
+}
 
-    disable_raw_mode().unwrap();
+fn main() -> Result<()> {
+    let mut app: Helios = initialize_app();
+    color_eyre::install()?;
+    let mut terminal = ratatui::init();
+    let result = app.run(&mut terminal);
+    ratatui::restore();
+    result
 }

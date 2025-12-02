@@ -1,16 +1,12 @@
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Line {
     text: String,
 }
 
-impl Line {
-    pub fn new() -> Self {
-        Self {
-            text: String::new(),
-        }
-    }
-}
-
+/// Represents a single open document.
+///
+/// Consists of lines and the document's file format as a String.
+#[allow(dead_code)]
 pub struct Buffer {
     lines: Vec<Line>,
     file_format: String,
@@ -18,6 +14,7 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new() -> Self {
+        dbg!("Helios: New Buffer Created!");
         Self {
             lines: vec![],
             file_format: ".txt".to_string(),

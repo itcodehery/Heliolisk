@@ -6,11 +6,34 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crossterm::event::KeyCode::Char;
 
 // States of the Document
+
+/// Navigate Mode
+/// # Allows:
+/// - Cursor Movement
+/// - Movement into any other Mode
+/// - Switching Buffers
 pub struct NavigateMode;
+/// Edit Mode:
+/// # Allows:
+/// - Editing Text of the Buffer
 pub struct EditMode;
+/// Select Mode:
+/// # Allows:
+/// - Selecting tokens in the buffers
+/// - Tokens include words, sentences and lines
 pub struct SelectMode;
+/// Command Mode:
+/// # Allows:
+/// - Execution of Editor Level and Buffer Level Commands
 pub struct CommandMode;
 
+/// Represents an instance of the Helios Editor
+///
+/// # Handles:
+/// - Multiple Buffers and their Focus
+/// - The Cursor
+/// - The Command Line
+/// - State of the Editor Independent from their Buffers
 pub struct Editor<State = NavigateMode> {
     buffers: Vec<Buffer>,
     current_focused_index: usize,
@@ -18,6 +41,7 @@ pub struct Editor<State = NavigateMode> {
     cursor_line: usize,
     is_quittable: bool,
     command_line: String,
+    error_line: String,
     state: PhantomData<State>,
 }
 
@@ -35,6 +59,7 @@ pub enum EditorAction {
 
 impl Editor {
     pub fn new(buffers: Vec<Buffer>) -> Self {
+        dbg!("Helios: New Editor Created with Buffer!");
         Self {
             buffers,
             current_focused_index: 0,
@@ -42,6 +67,7 @@ impl Editor {
             cursor_line: 0,
             cursor_col: 0,
             command_line: String::new(),
+            error_line: String::new(),
             state: PhantomData::<NavigateMode>,
         }
     }
@@ -69,8 +95,6 @@ impl Editor {
             }
         }
     }
-
-    pub fn quit(&self) {}
 }
 
 impl<S> Editor<S> {
@@ -82,36 +106,18 @@ impl<S> Editor<S> {
             cursor_col: self.cursor_col,
             cursor_line: self.cursor_line,
             command_line: self.command_line,
+            error_line: self.error_line,
             state: PhantomData,
         }
     }
-}
 
-impl Editor<NavigateMode> {
-    pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
-        let mut action = EditorAction::None;
-        match key.code {
-            Char('i') => action = EditorAction::EnterEditMode,
-            Char(':') => action = EditorAction::EnterCommandMode,
-            Char('v') => action = EditorAction::EnterEditMode,
-            Char('h') => self.move_cursor_left(),
-            Char('l') => self.move_cursor_right(),
-            Char('k') => self.move_cursor_up(),
-            Char('j') => self.move_cursor_down(),
-            KeyCode::Tab => self.buffer_switch_forward(),
-            KeyCode::BackTab => self.buffer_switch_backward(),
-            _ => {}
-        }
-        action
-    }
-
-    fn move_cursor_left(&mut self) {
+    pub fn move_cursor_left(&mut self) {
         if self.cursor_col > 0 {
             self.cursor_col -= 1;
         }
     }
 
-    fn move_cursor_right(&mut self) {
+    pub fn move_cursor_right(&mut self) {
         let buffer = &self.buffers[self.current_focused_index];
         let line_len = buffer.line_length(self.cursor_line);
         if self.cursor_col < line_len {
@@ -141,6 +147,25 @@ impl Editor<NavigateMode> {
             self.cursor_col = line_len;
         }
     }
+}
+
+impl Editor<NavigateMode> {
+    pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
+        let mut action = EditorAction::None;
+        match key.code {
+            Char('i') => action = EditorAction::EnterEditMode,
+            Char(':') => action = EditorAction::EnterCommandMode,
+            Char('v') => action = EditorAction::EnterEditMode,
+            Char('h') => self.move_cursor_left(),
+            Char('l') => self.move_cursor_right(),
+            Char('k') => self.move_cursor_up(),
+            Char('j') => self.move_cursor_down(),
+            KeyCode::Tab => self.buffer_switch_forward(),
+            KeyCode::BackTab => self.buffer_switch_backward(),
+            _ => {}
+        }
+        action
+    }
 
     pub fn enter_edit_mode(self) -> Editor<EditMode> {
         self.transition()
@@ -164,20 +189,6 @@ impl Editor<EditMode> {
         self.transition()
     }
 
-    pub fn move_cursor_left(&mut self) {
-        if self.cursor_col > 0 {
-            self.cursor_col -= 1;
-        }
-    }
-
-    pub fn move_cursor_right(&mut self) {
-        let buffer = &self.buffers[self.current_focused_index];
-        let line_len = buffer.line_length(self.cursor_line);
-        if self.cursor_col < line_len {
-            self.cursor_col += 1;
-        }
-    }
-
     pub fn insert_char(&mut self, c: char) {
         let buffer = &mut self.buffers[self.current_focused_index as usize];
         buffer.insert_char(self.cursor_line, self.cursor_col, c);
@@ -199,6 +210,23 @@ impl Editor<EditMode> {
                 self.delete_char();
                 EditorAction::None
             }
+            KeyCode::Up => {
+                self.move_cursor_up();
+                EditorAction::None
+            }
+            KeyCode::Left => {
+                self.move_cursor_left();
+                EditorAction::None
+            }
+            KeyCode::Right => {
+                self.move_cursor_right();
+                EditorAction::None
+            }
+            KeyCode::Down => {
+                self.move_cursor_down();
+                EditorAction::None
+            }
+
             _ => EditorAction::None,
         }
     }
@@ -250,6 +278,7 @@ impl Editor<CommandMode> {
             "w" => EditorAction::Save,
             "wq" => EditorAction::SaveAndQuit,
             "qa" => EditorAction::QuitAll,
+            "wel" => EditorAction::None, // Write in Error Line
             _ => EditorAction::None,
         }
     }
