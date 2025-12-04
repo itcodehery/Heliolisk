@@ -3,7 +3,6 @@ mod editor;
 mod helios;
 
 use crate::{
-    buffer::Buffer,
     editor::{CommandMode, EditMode, Editor, NavigateMode, SelectMode},
     helios::{Helios, initialize_app},
 };

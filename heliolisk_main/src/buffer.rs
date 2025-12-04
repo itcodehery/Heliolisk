@@ -1,22 +1,31 @@
 #[derive(Clone, Default)]
-pub struct Line {
-    text: String,
+pub struct HLine {
+    pub text: String,
+}
+
+impl HLine {
+    fn new() -> Self {
+        Self {
+            text: String::new(),
+        }
+    }
 }
 
 /// Represents a single open document.
 ///
 /// Consists of lines and the document's file format as a String.
 #[allow(dead_code)]
-pub struct Buffer {
-    lines: Vec<Line>,
-    file_format: String,
+#[derive(Clone)]
+pub struct HBuffer {
+    pub lines: Vec<HLine>,
+    pub file_format: String,
 }
 
-impl Buffer {
+impl HBuffer {
     pub fn new() -> Self {
         dbg!("Helios: New Buffer Created!");
         Self {
-            lines: vec![],
+            lines: vec![HLine::new()],
             file_format: ".txt".to_string(),
         }
     }
@@ -45,7 +54,11 @@ impl Buffer {
 
     pub fn delete_char(&mut self, line_idx: usize, col_idx: usize) {
         if line_idx < self.lines.len() {
-            self.lines[line_idx].text.remove(col_idx);
+            let line = &mut self.lines[line_idx].text;
+
+            if let Some((byte_idx, _)) = line.char_indices().nth(col_idx) {
+                line.remove(byte_idx);
+            }
         }
     }
 

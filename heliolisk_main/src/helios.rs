@@ -4,14 +4,14 @@ use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event, KeyEvent, KeyEventKind},
     layout::{Constraint, Direction, Layout, Rect},
-    symbols::border,
-    text::{Line, Text},
+    style::Stylize,
     widgets::{Block, Paragraph, Widget},
 };
 
 use crate::{
     EditorState,
-    editor::{CommandMode, EditMode, Editor, EditorAction, NavigateMode, SelectMode},
+    buffer::HBuffer,
+    editor::{Editor, EditorAction, NavigateMode},
 };
 
 /// The Global App State for Helios
@@ -42,7 +42,32 @@ impl Helios {
     }
 
     pub fn draw(&self, frame: &mut Frame) {
-        frame.render_widget(self, frame.area());
+        let area = frame.area();
+
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Percentage(95), Constraint::Percentage(5)])
+            .split(area);
+
+        frame.render_widget(self, area);
+
+        if let Some(state) = &self.editor_state {
+            let (cursor_line, cursor_col) = match state {
+                EditorState::Navigate(ed) => ed.get_cursor_position(),
+                EditorState::Command(ed) => ed.get_cursor_position(),
+                EditorState::Edit(ed) => ed.get_cursor_position(),
+                EditorState::Select(ed) => ed.get_cursor_position(),
+            };
+
+            let cursor_x = layout[0].x + cursor_col as u16 + 1; // +1 for left border
+            let cursor_y = layout[0].y + cursor_line as u16 + 1; // +1 for top border
+
+            if cursor_x < layout[0].x + layout[0].width - 1
+                && cursor_y < layout[0].y + layout[0].height - 1
+            {
+                frame.set_cursor(cursor_x, cursor_y);
+            }
+        }
     }
 
     fn handle_events(&mut self) -> Result<()> {
@@ -124,7 +149,7 @@ impl Helios {
 }
 
 pub fn initialize_app() -> Helios {
-    let alpha_buffer = crate::Buffer::new();
+    let alpha_buffer = HBuffer::new();
     let editor = Editor::<NavigateMode>::new(vec![alpha_buffer]);
     let helios = Helios::init(editor);
 
@@ -138,10 +163,32 @@ impl Widget for &Helios {
             .constraints(vec![Constraint::Percentage(95), Constraint::Percentage(5)])
             .split(area);
         if let Some(state) = &self.editor_state {
-            let _ = Block::bordered()
-                .border_set(border::PLAIN)
-                .title_bottom(format!("{}", state))
-                .render(layout[0], buf);
+            let buffers = match state {
+                EditorState::Navigate(ed) => ed.get_buffers(),
+                EditorState::Command(ed) => ed.get_buffers(),
+                EditorState::Edit(ed) => ed.get_buffers(),
+                EditorState::Select(ed) => ed.get_buffers(),
+            };
+
+            let state_name = format!("{}", state);
+
+            let state_name = match state {
+                EditorState::Navigate(_) => state_name.white(),
+                EditorState::Edit(_) => state_name.green(),
+                EditorState::Select(_) => state_name.red(),
+                EditorState::Command(_) => state_name.light_red(),
+            };
+
+            let main_block = Block::bordered().title_bottom(state_name);
+
+            let ratatui_lines: Vec<ratatui::text::Line> = buffers[0]
+                .lines
+                .iter()
+                .map(|line| ratatui::text::Line::from(line.text.as_str()))
+                .collect();
+
+            let para = Paragraph::new(ratatui_lines);
+            para.block(main_block).render(layout[0], buf);
 
             let command_text = match state {
                 EditorState::Navigate(ed) => ed.get_command_line(),
@@ -149,8 +196,9 @@ impl Widget for &Helios {
                 EditorState::Edit(ed) => ed.get_command_line(),
                 EditorState::Select(ed) => ed.get_command_line(),
             };
+
             Paragraph::new(command_text)
-                .block(Block::bordered().border_set(border::PLAIN))
+                .block(Block::new())
                 .render(layout[1], buf);
         }
     }
