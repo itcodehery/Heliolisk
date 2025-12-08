@@ -1,7 +1,7 @@
 use crate::buffer::HBuffer;
 use std::marker::PhantomData;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, ModifierKeyCode};
 
 use crossterm::event::KeyCode::Char;
 
@@ -54,6 +54,8 @@ pub enum EditorAction {
     EnterEditMode,
     EnterSelectMode,
     EnterNavigateMode,
+    DebugPrintLinesToConsole,
+    DebugPrintCurrentLineToConsole,
     None,
 }
 
@@ -131,6 +133,12 @@ impl<S> Editor<S> {
         }
     }
 
+    fn move_cursor_start(&mut self) {
+        if self.cursor_col > 0 {
+            self.cursor_col = 0;
+        }
+    }
+
     fn move_cursor_down(&mut self) {
         // todo!("Panics for some reason. Fix this!");
         let buffer = &self.buffers[self.current_focused_index];
@@ -149,8 +157,7 @@ impl<S> Editor<S> {
     }
 
     pub fn get_command_line(&self) -> String {
-        let string = ":".to_string() + &self.command_line.clone();
-        string
+        self.command_line.clone()
     }
 
     pub fn get_buffers(&self) -> Vec<HBuffer> {
@@ -168,6 +175,8 @@ impl Editor<NavigateMode> {
         let mut action = EditorAction::None;
         match key.code {
             Char('i') => action = EditorAction::EnterEditMode,
+            Char('a') => action = EditorAction::EnterEditMode,
+            Char('o') => action = EditorAction::EnterEditMode,
             Char(':') => action = EditorAction::EnterCommandMode,
             Char('v') => action = EditorAction::EnterSelectMode,
             Char('h') => self.move_cursor_left(),
@@ -209,6 +218,24 @@ impl Editor<EditMode> {
         self.cursor_col += 1;
     }
 
+    pub fn insert_line(&mut self) {
+        self.buffers[self.current_focused_index as usize].insert_line();
+        self.cursor_line += 1;
+        self.move_cursor_start();
+    }
+
+    pub fn delete_char(&mut self) {
+        let buffer = &mut self.buffers[self.current_focused_index];
+        // If the cursor is at the start of the character of the line, delete the line
+        if self.cursor_col == 0 && self.cursor_line == 0 {
+            buffer.delete_line(self.cursor_line);
+            self.move_cursor_up();
+        } else {
+            buffer.delete_char(self.cursor_line, self.cursor_col);
+            self.move_cursor_left();
+        }
+    }
+
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
         match key.code {
             KeyCode::Esc => EditorAction::EnterNavigateMode,
@@ -241,15 +268,12 @@ impl Editor<EditMode> {
                 self.move_cursor_down();
                 EditorAction::None
             }
-
+            KeyCode::Enter => {
+                self.insert_line();
+                EditorAction::None
+            }
             _ => EditorAction::None,
         }
-    }
-
-    pub fn delete_char(&mut self) {
-        let buffer = &mut self.buffers[self.current_focused_index];
-        buffer.delete_char(self.cursor_line, self.cursor_col);
-        self.move_cursor_left();
     }
 }
 
@@ -269,6 +293,8 @@ impl Editor<SelectMode> {
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
         match key.code {
             KeyCode::Esc => EditorAction::EnterNavigateMode,
+            Char('a') => EditorAction::EnterEditMode,
+            Char('o') => EditorAction::EnterEditMode,
             KeyCode::CapsLock => EditorAction::EnterNavigateMode,
             KeyCode::Char(c) => {
                 if c == 'i' {
@@ -299,7 +325,9 @@ impl Editor<CommandMode> {
             "w" => EditorAction::Save,
             "wq" => EditorAction::SaveAndQuit,
             "qa" => EditorAction::QuitAll,
-            "wel" => EditorAction::None, // Write in Error Line
+            "wel" => EditorAction::None,
+            "dla" => EditorAction::DebugPrintLinesToConsole, // DebugPrint Line All
+            "dlc" => EditorAction::DebugPrintCurrentLineToConsole, // DebugPrint Line Current
             _ => EditorAction::None,
         }
     }

@@ -52,6 +52,17 @@ impl HBuffer {
         }
     }
 
+    pub fn insert_line(&mut self) {
+        self.lines.push(HLine::new());
+    }
+
+    pub fn delete_line(&mut self, line_index: usize) {
+        // Optimization needed: Complexity -> O(n)
+        if line_index < self.lines.len() && self.lines.len() != 1 {
+            self.lines.remove(line_index);
+        }
+    }
+
     pub fn delete_char(&mut self, line_idx: usize, col_idx: usize) {
         if line_idx < self.lines.len() {
             let line = &mut self.lines[line_idx].text;

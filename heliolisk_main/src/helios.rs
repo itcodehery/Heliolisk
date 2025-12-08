@@ -59,8 +59,8 @@ impl Helios {
                 EditorState::Select(ed) => ed.get_cursor_position(),
             };
 
-            let cursor_x = layout[0].x + cursor_col as u16 + 1; // +1 for left border
-            let cursor_y = layout[0].y + cursor_line as u16 + 1; // +1 for top border
+            let cursor_x = layout[0].x + cursor_line as u16 + 1; // +1 for left border
+            let cursor_y = layout[0].y + cursor_col as u16 + 1; // +1 for top border
 
             if cursor_x < layout[0].x + layout[0].width - 1
                 && cursor_y < layout[0].y + layout[0].height - 1
@@ -179,7 +179,9 @@ impl Widget for &Helios {
                 EditorState::Command(_) => state_name.light_red(),
             };
 
-            let main_block = Block::bordered().title_bottom(state_name);
+            let main_block = Block::bordered()
+                .title_bottom(state_name)
+                .title_top(".txt".to_string());
 
             let ratatui_lines: Vec<ratatui::text::Line> = buffers[0]
                 .lines
