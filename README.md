@@ -31,4 +31,4 @@ Check out the [Issues](./issues) page for things to work on.
 
 ---
 
-![Heliolisk Banner](./images/heliolisk_banner_top.png)
+![Heliolisk Banner](./images/heliolisk_banner_bottom.png)
