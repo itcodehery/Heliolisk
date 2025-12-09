@@ -15,7 +15,7 @@ impl HLine {
 ///
 /// Consists of lines and the document's file format as a String.
 #[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct HBuffer {
     pub lines: Vec<HLine>,
     pub file_format: String,

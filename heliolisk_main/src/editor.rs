@@ -1,7 +1,7 @@
 use crate::buffer::HBuffer;
 use std::marker::PhantomData;
 
-use crossterm::event::{KeyCode, KeyEvent, ModifierKeyCode};
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crossterm::event::KeyCode::Char;
 
@@ -52,6 +52,7 @@ pub enum EditorAction {
     QuitAll,
     EnterCommandMode,
     EnterEditMode,
+    EnterEditModeInNewLine,
     EnterSelectMode,
     EnterNavigateMode,
     DebugPrintLinesToConsole,
@@ -75,7 +76,7 @@ impl Editor {
     }
 
     pub fn buffer_switch_forward(&mut self) {
-        if !(self.buffers.len() < 2) {
+        if self.buffers.len() >= 2 {
             if self.current_focused_index + 1 == self.buffers.len() {
                 self.current_focused_index = 0;
             } else {
@@ -86,13 +87,10 @@ impl Editor {
 
     pub fn buffer_switch_backward(&mut self) {
         if self.buffers.len() < 2 {
-            return;
+        } else if self.current_focused_index == 0 {
+            self.current_focused_index = self.buffers.len();
         } else {
-            if self.current_focused_index == 0 {
-                self.current_focused_index = self.buffers.len();
-            } else {
-                self.current_focused_index -= 1;
-            }
+            self.current_focused_index -= 1;
         }
     }
 }
@@ -176,7 +174,9 @@ impl Editor<NavigateMode> {
         match key.code {
             Char('i') => action = EditorAction::EnterEditMode,
             Char('a') => action = EditorAction::EnterEditMode,
-            Char('o') => action = EditorAction::EnterEditMode,
+            Char('o') => {
+                action = EditorAction::EnterEditModeInNewLine;
+            }
             Char(':') => action = EditorAction::EnterCommandMode,
             Char('v') => action = EditorAction::EnterSelectMode,
             Char('h') => self.move_cursor_left(),
@@ -213,13 +213,13 @@ impl Editor<EditMode> {
     }
 
     pub fn insert_char(&mut self, c: char) {
-        let buffer = &mut self.buffers[self.current_focused_index as usize];
+        let buffer = &mut self.buffers[self.current_focused_index];
         buffer.insert_char(self.cursor_line, self.cursor_col, c);
         self.cursor_col += 1;
     }
 
     pub fn insert_line(&mut self) {
-        self.buffers[self.current_focused_index as usize].insert_line();
+        self.buffers[self.current_focused_index].insert_line();
         self.cursor_line += 1;
         self.move_cursor_start();
     }
@@ -228,12 +228,28 @@ impl Editor<EditMode> {
         let buffer = &mut self.buffers[self.current_focused_index];
         // If the cursor is at the start of the character of the line, delete the line
         if self.cursor_col == 0 && self.cursor_line == 0 {
+        } else if self.cursor_col == 0 && buffer.lines[self.cursor_line].text.is_empty() {
             buffer.delete_line(self.cursor_line);
             self.move_cursor_up();
         } else {
-            buffer.delete_char(self.cursor_line, self.cursor_col);
+            // minus 1 here cuz the deletion must happen before the cursor
+            buffer.delete_char(self.cursor_line, self.cursor_col - 1);
             self.move_cursor_left();
         }
+    }
+
+    pub fn delete_to_next_whitespace(&mut self) {
+        todo!(
+            "Implement dw to delete word, but how it actually works is that it deletes the characters till a whitespace occurs."
+        )
+    }
+
+    pub fn delete_line(&mut self) {
+        let buffer = &mut self.buffers[self.current_focused_index];
+
+        let line_to_delete = self.cursor_line;
+        self.cursor_line -= 1;
+        buffer.delete_line(line_to_delete);
     }
 
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
@@ -293,8 +309,6 @@ impl Editor<SelectMode> {
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
         match key.code {
             KeyCode::Esc => EditorAction::EnterNavigateMode,
-            Char('a') => EditorAction::EnterEditMode,
-            Char('o') => EditorAction::EnterEditMode,
             KeyCode::CapsLock => EditorAction::EnterNavigateMode,
             KeyCode::Char(c) => {
                 if c == 'i' {

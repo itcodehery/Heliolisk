@@ -6,6 +6,7 @@ use crate::{
     editor::{CommandMode, EditMode, Editor, NavigateMode, SelectMode},
     helios::{Helios, initialize_app},
 };
+
 use color_eyre::Result;
 
 pub enum EditorState {
@@ -18,10 +19,10 @@ pub enum EditorState {
 impl std::fmt::Display for EditorState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EditorState::Navigate(_) => f.write_str("Navigate"),
-            EditorState::Edit(_) => f.write_str("Edit"),
-            EditorState::Select(_) => f.write_str("Select"),
-            EditorState::Command(_) => f.write_str("Command"),
+            EditorState::Navigate(_) => f.write_str("Nav"),
+            EditorState::Edit(_) => f.write_str("Edi"),
+            EditorState::Select(_) => f.write_str("Sel"),
+            EditorState::Command(_) => f.write_str("Com"),
         }
     }
 }

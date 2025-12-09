@@ -91,6 +91,9 @@ impl Helios {
                         EditorState::Navigate(editor)
                     }
                     EditorAction::EnterEditMode => EditorState::Edit(editor.enter_edit_mode()),
+                    EditorAction::EnterEditModeInNewLine => {
+                        EditorState::Edit(editor.enter_edit_mode())
+                    }
                     EditorAction::EnterCommandMode => {
                         EditorState::Command(editor.enter_command_mode())
                     }
@@ -151,9 +154,8 @@ impl Helios {
 pub fn initialize_app() -> Helios {
     let alpha_buffer = HBuffer::new();
     let editor = Editor::<NavigateMode>::new(vec![alpha_buffer]);
-    let helios = Helios::init(editor);
 
-    return helios;
+    Helios::init(editor)
 }
 
 impl Widget for &Helios {
@@ -171,6 +173,13 @@ impl Widget for &Helios {
             };
 
             let state_name = format!("{}", state);
+            let cursor_position = match state {
+                EditorState::Navigate(e) => e.get_cursor_position(),
+                EditorState::Edit(e) => e.get_cursor_position(),
+                EditorState::Select(e) => e.get_cursor_position(),
+                EditorState::Command(e) => e.get_cursor_position(),
+            };
+            let (char_pos, line_pos) = cursor_position;
 
             let state_name = match state {
                 EditorState::Navigate(_) => state_name.white(),
@@ -181,7 +190,8 @@ impl Widget for &Helios {
 
             let main_block = Block::bordered()
                 .title_bottom(state_name)
-                .title_top(".txt".to_string());
+                .title_top(".txt".to_string())
+                .title_bottom(format!("{}:{}", line_pos, char_pos));
 
             let ratatui_lines: Vec<ratatui::text::Line> = buffers[0]
                 .lines
