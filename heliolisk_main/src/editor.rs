@@ -233,7 +233,9 @@ impl Editor<EditMode> {
             self.move_cursor_up();
         } else {
             // minus 1 here cuz the deletion must happen before the cursor
-            buffer.delete_char(self.cursor_line, self.cursor_col - 1);
+            if self.cursor_col != 0 {
+                buffer.delete_char(self.cursor_line, self.cursor_col - 1);
+            }
             self.move_cursor_left();
         }
     }
@@ -310,6 +312,23 @@ impl Editor<SelectMode> {
         match key.code {
             KeyCode::Esc => EditorAction::EnterNavigateMode,
             KeyCode::CapsLock => EditorAction::EnterNavigateMode,
+            KeyCode::Char('h') => {
+                self.move_cursor_left();
+                EditorAction::None
+            }
+
+            KeyCode::Char('l') => {
+                self.move_cursor_right();
+                EditorAction::None
+            }
+            KeyCode::Char('k') => {
+                self.move_cursor_up();
+                EditorAction::None
+            }
+            KeyCode::Char('j') => {
+                self.move_cursor_down();
+                EditorAction::None
+            }
             KeyCode::Char(c) => {
                 if c == 'i' {
                     return EditorAction::EnterEditMode;

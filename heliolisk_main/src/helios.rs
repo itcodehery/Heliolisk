@@ -184,14 +184,14 @@ impl Widget for &Helios {
             let state_name = match state {
                 EditorState::Navigate(_) => state_name.white(),
                 EditorState::Edit(_) => state_name.green(),
-                EditorState::Select(_) => state_name.red(),
+                EditorState::Select(_) => state_name.yellow(),
                 EditorState::Command(_) => state_name.light_red(),
             };
 
             let main_block = Block::bordered()
                 .title_bottom(state_name)
                 .title_top(".txt".to_string())
-                .title_bottom(format!("{}:{}", line_pos, char_pos));
+                .title_bottom(format!("{}:{}", line_pos + 1, char_pos + 1));
 
             let ratatui_lines: Vec<ratatui::text::Line> = buffers[0]
                 .lines
