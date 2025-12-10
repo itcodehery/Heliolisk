@@ -1,5 +1,6 @@
 mod buffer;
 mod editor;
+mod file_ops;
 mod helios;
 
 use crate::{
