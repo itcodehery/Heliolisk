@@ -276,8 +276,28 @@ impl Helios {
 }
 
 pub fn initialize_app() -> Helios {
-    let alpha_buffer = HBuffer::new();
-    let editor = Editor::<NavigateMode>::new(vec![alpha_buffer]);
+    let args: Vec<String> = std::env::args().collect();
+    let initial_buffer = if let Some(file_name) = args.get(1) {
+        let path = std::path::PathBuf::from(file_name);
+        match file_ops::load_file(&path) {
+            Ok(buffer) => buffer,
+            Err(_) => {
+                // File likely doesn't exist, create new buffer with this path
+                let mut buffer = HBuffer::new();
+                buffer.file_path = Some(file_name.clone());
+                buffer.file_format = path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("txt")
+                    .to_string();
+                buffer
+            }
+        }
+    } else {
+        HBuffer::new()
+    };
+
+    let editor = Editor::<NavigateMode>::new(vec![initial_buffer]);
 
     Helios::init(editor)
 }

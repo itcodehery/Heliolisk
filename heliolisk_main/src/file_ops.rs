@@ -41,3 +41,29 @@ pub fn write_buffer_to_file(bf: &HBuffer, file_name: Option<String>) -> Result<(
 
     Ok(())
 }
+
+use crate::rope::HeliosRope;
+
+pub fn load_file(file_path: &PathBuf) -> Result<HBuffer, String> {
+    if !file_path.exists() {
+        return Err(format!("File not found: {:?}", file_path));
+    }
+
+    // Read the file content
+    let content = fs::read_to_string(file_path).map_err(|e| e.to_string())?;
+
+    // Create buffer
+    let buffer = HBuffer {
+        text: HeliosRope::from_str(&content),
+        file_format: file_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("txt")
+            .to_string(),
+        file_path: Some(file_path.to_string_lossy().to_string()),
+    };
+
+    dbg!(buffer.text.len_lines());
+
+    Ok(buffer)
+}
