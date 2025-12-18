@@ -1,5 +1,7 @@
 use crate::buffer::HBuffer;
 use std::marker::PhantomData;
+use std::thread;
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -47,8 +49,8 @@ pub struct Editor<State = NavigateMode> {
 
 pub enum EditorAction {
     Quit,
-    Save,
-    SaveAndQuit,
+    Save(Option<String>),
+    SaveAndQuit(Option<String>),
     QuitAll,
     EnterCommandMode,
     EnterEditMode,
@@ -158,9 +160,19 @@ impl<S> Editor<S> {
         self.command_line.clone()
     }
 
-    pub fn get_buffers(&self) -> Vec<HBuffer> {
+    pub fn get_error_line(&self) -> String {
+        self.error_line.clone()
+    }
+
+    pub fn get_buffers(&self) -> &Vec<HBuffer> {
         let buffers = &self.buffers;
-        buffers.to_vec()
+        buffers
+    }
+
+    pub fn set_error_line(&mut self, error: String) {
+        self.error_line = error;
+        thread::sleep(Duration::from_secs(10));
+        self.error_line = String::new();
     }
 
     pub fn get_cursor_position(&self) -> (usize, usize) {
@@ -355,13 +367,37 @@ impl Editor<CommandMode> {
         self.clear_command_line();
         match cmd {
             "q" => EditorAction::Quit,
-            "w" => EditorAction::Save,
-            "wq" => EditorAction::SaveAndQuit,
+            // "w" => EditorAction::Save,
+            // "wq" => EditorAction::SaveAndQuit,
             "qa" => EditorAction::QuitAll,
             "wel" => EditorAction::None,
             "dla" => EditorAction::DebugPrintLinesToConsole, // DebugPrint Line All
             "dlc" => EditorAction::DebugPrintCurrentLineToConsole, // DebugPrint Line Current
-            _ => EditorAction::None,
+            _ => {
+                // Spaghetti code btw
+                if cmd.starts_with("w") || cmd.starts_with("wq") {
+                    let splits = cmd.split(" ");
+
+                    if cmd.starts_with("wq") {
+                        if splits.clone().count() == 2 {
+                            return EditorAction::SaveAndQuit(Some(
+                                splits.last().unwrap().to_string().clone(),
+                            ));
+                        } else {
+                            return EditorAction::SaveAndQuit(None);
+                        }
+                    }
+                    if splits.clone().count() == 2 {
+                        return EditorAction::Save(Some(
+                            splits.last().unwrap().to_string().clone(),
+                        ));
+                    } else {
+                        return EditorAction::Save(None);
+                    }
+                } else {
+                    EditorAction::None
+                }
+            }
         }
     }
 

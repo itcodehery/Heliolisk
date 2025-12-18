@@ -12,6 +12,7 @@ use crate::{
     EditorState,
     buffer::HBuffer,
     editor::{Editor, EditorAction, NavigateMode},
+    file_ops,
 };
 
 /// The Global App State for Helios
@@ -46,7 +47,7 @@ impl Helios {
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Percentage(95), Constraint::Percentage(5)])
+            .constraints(vec![Constraint::Min(1), Constraint::Length(1)])
             .split(area);
 
         frame.render_widget(self, area);
@@ -80,6 +81,19 @@ impl Helios {
             _ => {}
         };
         Ok(())
+    }
+
+    fn save(
+        &self,
+        buffers: &[HBuffer],
+        file_name: Option<String>,
+    ) -> std::result::Result<String, String> {
+        let buffer_contents = file_ops::buffer_to_string(&buffers[0]);
+        let actual_file_name = file_name.unwrap_or_else(|| String::from("helios_test.txt"));
+        match file_ops::write_string_to_file(buffer_contents, Some(actual_file_name.clone())) {
+            Ok(_) => Ok(format!("Saved to {}", actual_file_name)),
+            Err(e) => Err(e),
+        }
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) {
@@ -121,31 +135,50 @@ impl Helios {
                     EditorAction::EnterEditMode => EditorState::Edit(editor.enter_edit_mode()),
                     _ => EditorState::Select(editor),
                 },
-                EditorState::Command(mut editor) => {
-                    match editor.handle_input(key_event) {
-                        EditorAction::Quit => {
-                            self.should_quit = true;
-                            EditorState::Command(editor)
-                        }
-                        EditorAction::EnterNavigateMode => {
-                            EditorState::Navigate(editor.enter_navigate_mode())
-                        }
-                        EditorAction::Save => {
-                            // TODO: Implement Save
-                            EditorState::Command(editor)
-                        }
-                        EditorAction::SaveAndQuit => {
-                            // TODO: Implement Save
-                            self.should_quit = true;
-                            EditorState::Command(editor)
-                        }
-                        EditorAction::QuitAll => {
-                            self.should_quit = true;
-                            EditorState::Command(editor)
-                        }
-                        _ => EditorState::Command(editor),
+                EditorState::Command(mut editor) => match editor.handle_input(key_event) {
+                    EditorAction::Quit => {
+                        self.should_quit = true;
+                        EditorState::Command(editor)
                     }
-                }
+                    EditorAction::EnterNavigateMode => {
+                        EditorState::Navigate(editor.enter_navigate_mode())
+                    }
+                    EditorAction::Save(file_name) => {
+                        let buffers = editor.get_buffers();
+                        match self.save(buffers, file_name) {
+                            Ok(s) => {
+                                let mut status = String::from("Saved... ");
+                                status.push_str(&s);
+                                editor.set_error_line(status);
+                            }
+                            Err(s) => {
+                                let mut status = String::from("Error Occurred... ");
+                                status.push_str(&s);
+                                editor.set_error_line(status);
+                            }
+                        }
+                        EditorState::Command(editor)
+                    }
+                    EditorAction::SaveAndQuit(file_name) => {
+                        let buffers = editor.get_buffers();
+                        match self.save(buffers, file_name) {
+                            Ok(_) => {
+                                self.should_quit = true;
+                            }
+                            Err(s) => {
+                                let mut status = String::from("Error Occurred... ");
+                                status.push_str(&s);
+                                editor.set_error_line(status);
+                            }
+                        }
+                        EditorState::Command(editor)
+                    }
+                    EditorAction::QuitAll => {
+                        self.should_quit = true;
+                        EditorState::Command(editor)
+                    }
+                    _ => EditorState::Command(editor),
+                },
             });
         }
     }
@@ -162,7 +195,7 @@ impl Widget for &Helios {
     fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Percentage(95), Constraint::Percentage(5)])
+            .constraints(vec![Constraint::Min(1), Constraint::Length(1)])
             .split(area);
         if let Some(state) = &self.editor_state {
             let buffers = match state {
@@ -209,9 +242,24 @@ impl Widget for &Helios {
                 EditorState::Select(ed) => ed.get_command_line(),
             };
 
-            Paragraph::new(command_text)
-                .block(Block::new())
-                .render(layout[1], buf);
+            let error_text = match state {
+                EditorState::Navigate(ed) => ed.get_error_line(),
+                EditorState::Command(ed) => ed.get_error_line(),
+                EditorState::Edit(ed) => ed.get_error_line(),
+                EditorState::Select(ed) => ed.get_error_line(),
+            };
+
+            let status_text = if !error_text.is_empty() {
+                Paragraph::new(error_text.clone()).style(
+                    ratatui::style::Style::default()
+                        .bg(ratatui::style::Color::Red)
+                        .fg(ratatui::style::Color::White),
+                )
+            } else {
+                Paragraph::new(command_text.clone())
+            };
+
+            status_text.block(Block::new()).render(layout[1], buf);
         }
     }
 }
