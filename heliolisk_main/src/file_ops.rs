@@ -4,12 +4,7 @@ use crate::buffer::HBuffer;
 
 #[allow(dead_code)]
 pub fn buffer_to_string(bf: &HBuffer) -> String {
-    let mut str = String::new();
-    bf.lines.iter().for_each(|s| {
-        str.push_str(&s.text);
-        str.push_str("\n");
-    });
-    str
+    bf.text.to_string()
 }
 
 #[allow(dead_code)]

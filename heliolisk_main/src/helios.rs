@@ -42,7 +42,7 @@ impl Helios {
         Ok(())
     }
 
-    pub fn draw(&self, frame: &mut Frame) {
+    pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
         let layout = Layout::default()
@@ -50,9 +50,23 @@ impl Helios {
             .constraints(vec![Constraint::Min(1), Constraint::Length(1)])
             .split(area);
 
-        frame.render_widget(self, area);
+        // 1. Update Viewport (Mutation phase)
+        if let Some(state) = &mut self.editor_state {
+            let height = layout[0].height as usize;
+            match state {
+                EditorState::Navigate(ed) => ed.update_viewport(height),
+                EditorState::Command(ed) => ed.update_viewport(height),
+                EditorState::Edit(ed) => ed.update_viewport(height),
+                EditorState::Select(ed) => ed.update_viewport(height),
+            }
+        }
 
+        // 2. Render Content (Immutable render)
+        frame.render_widget(&*self, area);
+
+        // 3. Render Cursor and manage offsets (Immutable access)
         if let Some(state) = &self.editor_state {
+            let height = layout[0].height as usize;
             let (cursor_line, cursor_col) = match state {
                 EditorState::Navigate(ed) => ed.get_cursor_position(),
                 EditorState::Command(ed) => ed.get_cursor_position(),
@@ -60,13 +74,24 @@ impl Helios {
                 EditorState::Select(ed) => ed.get_cursor_position(),
             };
 
-            let cursor_x = layout[0].x + cursor_line as u16 + 1; // +1 for left border
-            let cursor_y = layout[0].y + cursor_col as u16 + 1; // +1 for top border
+            let scroll_offset = match state {
+                EditorState::Navigate(ed) => ed.get_scroll_offset(),
+                EditorState::Command(ed) => ed.get_scroll_offset(),
+                EditorState::Edit(ed) => ed.get_scroll_offset(),
+                EditorState::Select(ed) => ed.get_scroll_offset(),
+            };
 
-            if cursor_x < layout[0].x + layout[0].width - 1
-                && cursor_y < layout[0].y + layout[0].height - 1
-            {
-                frame.set_cursor(cursor_x, cursor_y);
+            // Calculate visual cursor position relative to the viewport
+            if cursor_line >= scroll_offset && cursor_line < scroll_offset + height {
+                let visual_cursor_y = cursor_line - scroll_offset;
+                let cursor_x = layout[0].x + cursor_col as u16 + 1; // +1 for left border
+                let cursor_y = layout[0].y + visual_cursor_y as u16 + 1; // +1 for top border
+
+                if cursor_x < layout[0].x + layout[0].width - 1
+                    && cursor_y < layout[0].y + layout[0].height - 1
+                {
+                    frame.set_cursor(cursor_x, cursor_y);
+                }
             }
         }
     }
@@ -226,10 +251,24 @@ impl Widget for &Helios {
                 .title_top(".txt".to_string())
                 .title_bottom(format!("{}:{}", line_pos + 1, char_pos + 1));
 
-            let ratatui_lines: Vec<ratatui::text::Line> = buffers[0]
-                .lines
-                .iter()
-                .map(|line| ratatui::text::Line::from(line.text.as_str()))
+            let scroll_offset = match state {
+                EditorState::Navigate(e) => e.get_scroll_offset(),
+                EditorState::Edit(e) => e.get_scroll_offset(),
+                EditorState::Select(e) => e.get_scroll_offset(),
+                EditorState::Command(e) => e.get_scroll_offset(),
+            };
+            
+            let viewport_height = layout[0].height as usize;
+
+            let ratatui_lines: Vec<ratatui::text::Line> = (0..viewport_height)
+                .map(|i| {
+                    let line_idx = scroll_offset + i;
+                    let line_cow = buffers[0].text.line(line_idx);
+                    // Remove newline characters for rendering if necessary, though Ratatui handles them usually.
+                    // Ropey lines include newlines.
+                    let line_str = line_cow.trim_end_matches(['\n', '\r']); 
+                    ratatui::text::Line::from(line_str.to_string())
+                })
                 .collect();
 
             let para = Paragraph::new(ratatui_lines);

@@ -41,6 +41,7 @@ pub struct Editor<State = NavigateMode> {
     current_focused_index: usize,
     cursor_col: usize,
     cursor_line: usize,
+    scroll_offset: usize,
     is_quittable: bool,
     command_line: String,
     error_line: String,
@@ -71,6 +72,7 @@ impl Editor {
             is_quittable: true,
             cursor_line: 0,
             cursor_col: 0,
+            scroll_offset: 0,
             command_line: String::new(),
             error_line: String::new(),
             state: PhantomData::<NavigateMode>,
@@ -105,10 +107,23 @@ impl<S> Editor<S> {
             is_quittable: self.is_quittable,
             cursor_col: self.cursor_col,
             cursor_line: self.cursor_line,
+            scroll_offset: self.scroll_offset,
             command_line: self.command_line,
             error_line: self.error_line,
             state: PhantomData,
         }
+    }
+
+    pub fn update_viewport(&mut self, height: usize) {
+        if self.cursor_line < self.scroll_offset {
+            self.scroll_offset = self.cursor_line;
+        } else if self.cursor_line >= self.scroll_offset + height {
+            self.scroll_offset = self.cursor_line - height + 1;
+        }
+    }
+
+    pub fn get_scroll_offset(&self) -> usize {
+        self.scroll_offset
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -231,7 +246,7 @@ impl Editor<EditMode> {
     }
 
     pub fn insert_line(&mut self) {
-        self.buffers[self.current_focused_index].insert_line();
+        self.buffers[self.current_focused_index].insert_line(self.cursor_line, self.cursor_col);
         self.cursor_line += 1;
         self.move_cursor_start();
     }
@@ -240,7 +255,8 @@ impl Editor<EditMode> {
         let buffer = &mut self.buffers[self.current_focused_index];
         // If the cursor is at the start of the character of the line, delete the line
         if self.cursor_col == 0 && self.cursor_line == 0 {
-        } else if self.cursor_col == 0 && buffer.lines[self.cursor_line].text.is_empty() {
+        } else if self.cursor_col == 0 && buffer.line_length(self.cursor_line) == 0 {
+            // Empty line
             buffer.delete_line(self.cursor_line);
             self.move_cursor_up();
         } else {
