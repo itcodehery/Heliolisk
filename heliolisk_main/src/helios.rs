@@ -1,4 +1,5 @@
 use std::io::Result;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use ratatui::{
     DefaultTerminal, Frame,
@@ -22,24 +23,59 @@ use crate::{
 pub struct Helios {
     editor_state: Option<EditorState>,
     should_quit: bool,
+    save_tx: Sender<std::result::Result<String, String>>,
+    save_rx: Receiver<std::result::Result<String, String>>,
 }
 
 impl Helios {
     pub fn init(editor: Editor) -> Self {
         dbg!("Helios: Initialized Editor State");
+        let (save_tx, save_rx) = mpsc::channel();
         Self {
             editor_state: Some(EditorState::Navigate(editor)),
             should_quit: false,
+            save_tx,
+            save_rx,
         }
     }
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> color_eyre::Result<()> {
         while !self.should_quit {
+            self.check_background_tasks();
+            self.check_error_expiry();
             terminal.draw(|frame| self.draw(frame))?;
             self.handle_events()?;
         }
 
         Ok(())
+    }
+
+    pub fn check_error_expiry(&mut self) {
+        if let Some(state) = &mut self.editor_state {
+            match state {
+                EditorState::Navigate(ed) => ed.check_error_expiry(),
+                EditorState::Command(ed) => ed.check_error_expiry(),
+                EditorState::Edit(ed) => ed.check_error_expiry(),
+                EditorState::Select(ed) => ed.check_error_expiry(),
+            }
+        }
+    }
+
+    pub fn check_background_tasks(&mut self) {
+        while let Ok(res) = self.save_rx.try_recv() {
+            let msg = match res {
+                Ok(s) => s,
+                Err(e) => format!("Error: {}", e),
+            };
+            if let Some(state) = &mut self.editor_state {
+                match state {
+                    EditorState::Navigate(ed) => ed.set_error_line(msg),
+                    EditorState::Command(ed) => ed.set_error_line(msg),
+                    EditorState::Edit(ed) => ed.set_error_line(msg),
+                    EditorState::Select(ed) => ed.set_error_line(msg),
+                }
+            }
+        }
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -66,8 +102,15 @@ impl Helios {
 
         // 3. Render Cursor and manage offsets (Immutable access)
         if let Some(state) = &self.editor_state {
+            let buffers = match state {
+                EditorState::Navigate(ed) => ed.get_buffers(),
+                EditorState::Command(ed) => ed.get_buffers(),
+                EditorState::Edit(ed) => ed.get_buffers(),
+                EditorState::Select(ed) => ed.get_buffers(),
+            };
+
             let height = layout[0].height as usize;
-            let (cursor_line, cursor_col) = match state {
+            let (cursor_col, cursor_line) = match state {
                 EditorState::Navigate(ed) => ed.get_cursor_position(),
                 EditorState::Command(ed) => ed.get_cursor_position(),
                 EditorState::Edit(ed) => ed.get_cursor_position(),
@@ -83,8 +126,15 @@ impl Helios {
 
             // Calculate visual cursor position relative to the viewport
             if cursor_line >= scroll_offset && cursor_line < scroll_offset + height {
+                let line_text = buffers[0].text.line(cursor_line);
+                let visual_col: usize = line_text
+                    .chars()
+                    .take(cursor_col)
+                    .map(|c| if c == '\t' { 4 } else { 1 })
+                    .sum();
+
                 let visual_cursor_y = cursor_line - scroll_offset;
-                let cursor_x = layout[0].x + cursor_col as u16 + 1; // +1 for left border
+                let cursor_x = layout[0].x + visual_col as u16 + 1; // +1 for left border
                 let cursor_y = layout[0].y + visual_cursor_y as u16 + 1; // +1 for top border
 
                 if cursor_x < layout[0].x + layout[0].width - 1
@@ -97,28 +147,17 @@ impl Helios {
     }
 
     fn handle_events(&mut self) -> Result<()> {
-        match event::read()? {
-            // it's important to check that the event is a key press event as
-            // crossterm also emits key release and repeat events on Windows.
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_event(key_event)
-            }
-            _ => {}
-        };
-        Ok(())
-    }
-
-    fn save(
-        &self,
-        buffers: &[HBuffer],
-        file_name: Option<String>,
-    ) -> std::result::Result<String, String> {
-        let buffer_contents = file_ops::buffer_to_string(&buffers[0]);
-        let actual_file_name = file_name.unwrap_or_else(|| String::from("helios_test.txt"));
-        match file_ops::write_string_to_file(buffer_contents, Some(actual_file_name.clone())) {
-            Ok(_) => Ok(format!("Saved to {}", actual_file_name)),
-            Err(e) => Err(e),
+        if event::poll(std::time::Duration::from_millis(100))? {
+            match event::read()? {
+                // it's important to check that the event is a key press event as
+                // crossterm also emits key release and repeat events on Windows.
+                Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                    self.handle_key_event(key_event)
+                }
+                _ => {}
+            };
         }
+        Ok(())
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) {
@@ -131,7 +170,9 @@ impl Helios {
                     }
                     EditorAction::EnterEditMode => EditorState::Edit(editor.enter_edit_mode()),
                     EditorAction::EnterEditModeInNewLine => {
-                        EditorState::Edit(editor.enter_edit_mode())
+                        let mut ed = editor.enter_edit_mode();
+                        ed.open_line_below();
+                        EditorState::Edit(ed)
                     }
                     EditorAction::EnterCommandMode => {
                         EditorState::Command(editor.enter_command_mode())
@@ -169,24 +210,49 @@ impl Helios {
                         EditorState::Navigate(editor.enter_navigate_mode())
                     }
                     EditorAction::Save(file_name) => {
-                        let buffers = editor.get_buffers();
-                        match self.save(buffers, file_name) {
-                            Ok(s) => {
-                                let mut status = String::from("Saved... ");
-                                status.push_str(&s);
-                                editor.set_error_line(status);
+                        // Determine effective filename: User input > Existing Buffer Path > Default
+                        let current_path = editor.get_active_buffer().file_path.clone();
+                        let effective_name = file_name
+                            .clone()
+                            .or(current_path)
+                            .unwrap_or_else(|| "helios_test.txt".to_string());
+
+                        // Update buffer path so future saves use it
+                        editor.get_active_buffer_mut().file_path = Some(effective_name.clone());
+
+                        let buffer_clone = editor.get_active_buffer().clone();
+                        let tx = self.save_tx.clone();
+
+                        editor.set_error_line("Saving in background...".to_string());
+
+                        std::thread::spawn(move || {
+                            match file_ops::write_buffer_to_file(
+                                &buffer_clone,
+                                Some(effective_name.clone()),
+                            ) {
+                                Ok(_) => {
+                                    let _ = tx.send(Ok(format!("Saved {}", effective_name)));
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(Err(format!("Save failed: {}", e)));
+                                }
                             }
-                            Err(s) => {
-                                let mut status = String::from("Error Occurred... ");
-                                status.push_str(&s);
-                                editor.set_error_line(status);
-                            }
-                        }
+                        });
+
                         EditorState::Command(editor)
                     }
                     EditorAction::SaveAndQuit(file_name) => {
-                        let buffers = editor.get_buffers();
-                        match self.save(buffers, file_name) {
+                        // Determine effective filename: User input > Existing Buffer Path > Default
+                        let current_path = editor.get_active_buffer().file_path.clone();
+                        let effective_name = file_name
+                            .clone()
+                            .or(current_path)
+                            .unwrap_or_else(|| "helios_test.txt".to_string());
+
+                        // We use get_active_buffer() instead of direct buffers access for consistency
+                        let buffer = editor.get_active_buffer();
+
+                        match file_ops::write_buffer_to_file(buffer, Some(effective_name)) {
                             Ok(_) => {
                                 self.should_quit = true;
                             }
@@ -248,7 +314,12 @@ impl Widget for &Helios {
 
             let main_block = Block::bordered()
                 .title_bottom(state_name)
-                .title_top(".txt".to_string())
+                .title_top(
+                    buffers[0]
+                        .file_path
+                        .clone()
+                        .unwrap_or_else(|| ".txt".to_string()),
+                )
                 .title_bottom(format!("{}:{}", line_pos + 1, char_pos + 1));
 
             let scroll_offset = match state {
@@ -257,7 +328,7 @@ impl Widget for &Helios {
                 EditorState::Select(e) => e.get_scroll_offset(),
                 EditorState::Command(e) => e.get_scroll_offset(),
             };
-            
+
             let viewport_height = layout[0].height as usize;
 
             let ratatui_lines: Vec<ratatui::text::Line> = (0..viewport_height)
@@ -266,8 +337,10 @@ impl Widget for &Helios {
                     let line_cow = buffers[0].text.line(line_idx);
                     // Remove newline characters for rendering if necessary, though Ratatui handles them usually.
                     // Ropey lines include newlines.
-                    let line_str = line_cow.trim_end_matches(['\n', '\r']); 
-                    ratatui::text::Line::from(line_str.to_string())
+                    let line_str = line_cow
+                        .trim_end_matches(['\n', '\r'])
+                        .replace("\t", "    ");
+                    ratatui::text::Line::from(line_str)
                 })
                 .collect();
 
@@ -292,7 +365,7 @@ impl Widget for &Helios {
                 Paragraph::new(error_text.clone()).style(
                     ratatui::style::Style::default()
                         .bg(ratatui::style::Color::Red)
-                        .fg(ratatui::style::Color::White),
+                        .fg(ratatui::style::Color::Black),
                 )
             } else {
                 Paragraph::new(command_text.clone())

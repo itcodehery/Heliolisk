@@ -1,7 +1,6 @@
 use crate::buffer::HBuffer;
 use std::marker::PhantomData;
-use std::thread;
-use std::time::Duration;
+use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -45,6 +44,7 @@ pub struct Editor<State = NavigateMode> {
     is_quittable: bool,
     command_line: String,
     error_line: String,
+    error_timestamp: Option<Instant>,
     state: PhantomData<State>,
 }
 
@@ -75,6 +75,7 @@ impl Editor {
             scroll_offset: 0,
             command_line: String::new(),
             error_line: String::new(),
+            error_timestamp: None,
             state: PhantomData::<NavigateMode>,
         }
     }
@@ -110,6 +111,7 @@ impl<S> Editor<S> {
             scroll_offset: self.scroll_offset,
             command_line: self.command_line,
             error_line: self.error_line,
+            error_timestamp: self.error_timestamp,
             state: PhantomData,
         }
     }
@@ -184,10 +186,26 @@ impl<S> Editor<S> {
         buffers
     }
 
+    pub fn get_active_buffer(&self) -> &HBuffer {
+        &self.buffers[self.current_focused_index]
+    }
+
+    pub fn get_active_buffer_mut(&mut self) -> &mut HBuffer {
+        &mut self.buffers[self.current_focused_index]
+    }
+
     pub fn set_error_line(&mut self, error: String) {
         self.error_line = error;
-        thread::sleep(Duration::from_secs(10));
-        self.error_line = String::new();
+        self.error_timestamp = Some(Instant::now());
+    }
+
+    pub fn check_error_expiry(&mut self) {
+        if let Some(time) = self.error_timestamp {
+            if time.elapsed() >= std::time::Duration::from_secs(10) {
+                self.error_line.clear();
+                self.error_timestamp = None;
+            }
+        }
     }
 
     pub fn get_cursor_position(&self) -> (usize, usize) {
@@ -253,18 +271,27 @@ impl Editor<EditMode> {
 
     pub fn delete_char(&mut self) {
         let buffer = &mut self.buffers[self.current_focused_index];
-        // If the cursor is at the start of the character of the line, delete the line
-        if self.cursor_col == 0 && self.cursor_line == 0 {
-        } else if self.cursor_col == 0 && buffer.line_length(self.cursor_line) == 0 {
-            // Empty line
-            buffer.delete_line(self.cursor_line);
-            self.move_cursor_up();
-        } else {
-            // minus 1 here cuz the deletion must happen before the cursor
-            if self.cursor_col != 0 {
-                buffer.delete_char(self.cursor_line, self.cursor_col - 1);
+
+        if self.cursor_col == 0 {
+            if self.cursor_line > 0 {
+                let prev_line_idx = self.cursor_line - 1;
+                let prev_line_len = buffer.line_length(prev_line_idx);
+
+                // The newline character is at len - 1
+                let new_cursor_col = if prev_line_len > 0 {
+                    prev_line_len - 1
+                } else {
+                    0
+                };
+
+                buffer.delete_char(prev_line_idx, new_cursor_col);
+
+                self.cursor_line = prev_line_idx;
+                self.cursor_col = new_cursor_col;
             }
-            self.move_cursor_left();
+        } else {
+            buffer.delete_char(self.cursor_line, self.cursor_col - 1);
+            self.cursor_col -= 1;
         }
     }
 
@@ -280,6 +307,15 @@ impl Editor<EditMode> {
         let line_to_delete = self.cursor_line;
         self.cursor_line -= 1;
         buffer.delete_line(line_to_delete);
+    }
+
+    pub fn open_line_below(&mut self) {
+        let buffer = &mut self.buffers[self.current_focused_index];
+        let len = buffer.line_length(self.cursor_line);
+
+        buffer.insert_char(self.cursor_line, len, '\n');
+        self.cursor_line += 1;
+        self.cursor_col = 0;
     }
 
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
@@ -316,6 +352,14 @@ impl Editor<EditMode> {
             }
             KeyCode::Enter => {
                 self.insert_line();
+                EditorAction::None
+            }
+            KeyCode::Tab => {
+                self.insert_char('\t');
+                EditorAction::None
+            }
+            KeyCode::Home => {
+                self.move_cursor_start();
                 EditorAction::None
             }
             _ => EditorAction::None,

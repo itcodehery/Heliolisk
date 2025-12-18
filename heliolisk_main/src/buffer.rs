@@ -8,6 +8,7 @@ use crate::rope::HeliosRope;
 pub struct HBuffer {
     pub text: HeliosRope,
     pub file_format: String,
+    pub file_path: Option<String>,
 }
 
 impl HBuffer {
@@ -16,6 +17,7 @@ impl HBuffer {
         Self {
             text: HeliosRope::new(),
             file_format: ".txt".to_string(),
+            file_path: None,
         }
     }
 
@@ -39,7 +41,7 @@ impl HBuffer {
         // We need to find the char index from line/col
         let line_start_char = self.text.line_to_char(line_idx);
         let char_idx = line_start_char + col_idx;
-        
+
         // Safety: Ensure we don't insert past the line end (careful with newlines)
         // For now, simple insertion. Ropes handle newlines as characters.
         self.text.insert_char(char_idx, c);
@@ -54,7 +56,7 @@ impl HBuffer {
         // Delete a range of characters corresponding to the line
         let start_char = self.text.line_to_char(line_index);
         let end_char = self.text.line_to_char(line_index + 1);
-        
+
         self.text.remove(start_char..end_char);
     }
 
@@ -64,7 +66,7 @@ impl HBuffer {
 
         // Ensure we are deleting a valid char
         if char_idx < self.text.len_chars() {
-             self.text.remove(char_idx..char_idx + 1);
+            self.text.remove(char_idx..char_idx + 1);
         }
     }
 
