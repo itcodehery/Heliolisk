@@ -61,6 +61,8 @@ pub fn load_file(file_path: &PathBuf) -> Result<HBuffer, String> {
             .unwrap_or("txt")
             .to_string(),
         file_path: Some(file_path.to_string_lossy().to_string()),
+        undo_stack: Vec::new(),
+        redo_stack: Vec::new(),
     };
 
     dbg!(buffer.text.len_lines());

@@ -88,7 +88,7 @@ impl Helios {
 
         // 1. Update Viewport (Mutation phase)
         if let Some(state) = &mut self.editor_state {
-            let height = layout[0].height as usize;
+            let height = (layout[0].height as usize).saturating_sub(2);
             match state {
                 EditorState::Navigate(ed) => ed.update_viewport(height),
                 EditorState::Command(ed) => ed.update_viewport(height),
@@ -109,7 +109,7 @@ impl Helios {
                 EditorState::Select(ed) => ed.get_buffers(),
             };
 
-            let height = layout[0].height as usize;
+            let height = (layout[0].height as usize).saturating_sub(2);
             let (cursor_col, cursor_line) = match state {
                 EditorState::Navigate(ed) => ed.get_cursor_position(),
                 EditorState::Command(ed) => ed.get_cursor_position(),
@@ -349,7 +349,7 @@ impl Widget for &Helios {
                 EditorState::Command(e) => e.get_scroll_offset(),
             };
 
-            let viewport_height = layout[0].height as usize;
+            let viewport_height = (layout[0].height as usize).saturating_sub(2);
 
             let ratatui_lines: Vec<ratatui::text::Line> = (0..viewport_height)
                 .map(|i| {

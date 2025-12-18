@@ -45,6 +45,7 @@ pub struct Editor<State = NavigateMode> {
     command_line: String,
     error_line: String,
     error_timestamp: Option<Instant>,
+    input_seq: String,
     state: PhantomData<State>,
 }
 
@@ -76,6 +77,7 @@ impl Editor {
             command_line: String::new(),
             error_line: String::new(),
             error_timestamp: None,
+            input_seq: String::new(),
             state: PhantomData::<NavigateMode>,
         }
     }
@@ -112,6 +114,7 @@ impl<S> Editor<S> {
             command_line: self.command_line,
             error_line: self.error_line,
             error_timestamp: self.error_timestamp,
+            input_seq: self.input_seq,
             state: PhantomData,
         }
     }
@@ -211,23 +214,321 @@ impl<S> Editor<S> {
     pub fn get_cursor_position(&self) -> (usize, usize) {
         (self.cursor_col, self.cursor_line)
     }
+
+    pub fn undo(&mut self) {
+        let buffer = &mut self.buffers[self.current_focused_index];
+        buffer.undo();
+    }
+
+    pub fn redo(&mut self) {
+        let buffer = &mut self.buffers[self.current_focused_index];
+        buffer.redo();
+    }
+
+    pub fn delete_to_next_whitespace(&mut self) {
+        let buffer = &mut self.buffers[self.current_focused_index];
+
+        // Snapshot before modification
+        buffer.save_snapshot();
+
+        let line_len = buffer.line_length(self.cursor_line);
+        if self.cursor_col >= line_len {
+            return;
+        }
+
+        let line_text = buffer.text.line(self.cursor_line);
+        // line_text includes chars
+        // We need to look ahead from cursor_col
+
+        // Since line_text is a Cow<str>, and we want to iterate chars.
+        // It's easier to just work with char indices if possible or converting to string/vec.
+        // Accessing via chars iterator is O(N).
+
+        let chars: Vec<char> = line_text.chars().collect();
+        if self.cursor_col >= chars.len() {
+            return; // Should be covered by line_len check but just in case
+        }
+
+        let mut delete_count = 0;
+        let mut started_on_whitespace = chars[self.cursor_col].is_whitespace();
+
+        for i in self.cursor_col..chars.len() {
+            let c = chars[i];
+
+            if started_on_whitespace {
+                if !c.is_whitespace() {
+                    break;
+                }
+            } else {
+                if c.is_whitespace() {
+                    break;
+                }
+            }
+            delete_count += 1;
+        }
+
+        // Perform deletion
+        for _ in 0..delete_count {
+            // We always delete at current cursor_col, shrinking the line
+            buffer.delete_char(self.cursor_line, self.cursor_col);
+        }
+    }
+
+    pub fn move_word_forward(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        let mut found_word_start = false;
+
+        loop {
+            let line_len = buffer.line_length(self.cursor_line);
+
+            // If strictly inside the line
+            if self.cursor_col < line_len {
+                let line_text = buffer.text.line(self.cursor_line);
+                let chars: Vec<char> = line_text.chars().collect();
+
+                // Check if current is whitespace (or special) to know if we crossed a boundary
+                // Simple logic for now: skip current word (non-whitespace), then skip whitespace.
+
+                // Better logic:
+                // 1. If on word char, skip until whitespace.
+                // 2. Skip whitespace until word char.
+                // But vim 'w' is "start of next word".
+
+                // Let's implement simple step-by-step advance.
+                // Note: This is an O(N) naive implementation in a loop.
+
+                let c = chars.get(self.cursor_col).unwrap_or(&'\n');
+
+                if c.is_whitespace() {
+                    // If we are on whitespace, we are looking for non-whitespace
+                    self.cursor_col += 1;
+                    if self.cursor_col < chars.len() && !chars[self.cursor_col].is_whitespace() {
+                        // Found start of next word
+                        break;
+                    }
+                } else {
+                    // We are on a word, move until whitespace or end
+                    self.cursor_col += 1;
+                    // But we might hit whitespace immediately.
+                    // If we hit whitespace, we continue loop to next iteration which handles whitespace.
+                }
+            } else {
+                // End of line, move to next line
+                if self.cursor_line < buffer.line_count() - 1 {
+                    self.cursor_line += 1;
+                    self.cursor_col = 0;
+                    // Check if 0 is a word char
+                    let line_text = buffer.text.line(self.cursor_line);
+                    if let Some(c) = line_text.chars().next() {
+                        if !c.is_whitespace() {
+                            break;
+                        }
+                    }
+                } else {
+                    break; // End of file
+                }
+            }
+        }
+        self.clamp_cursor_col();
+    }
+
+    pub fn move_word_backward(&mut self) {
+        // Simplified 'b' implementation
+        let buffer = &self.buffers[self.current_focused_index];
+
+        loop {
+            if self.cursor_col > 0 {
+                self.cursor_col -= 1;
+
+                let line_text = buffer.text.line(self.cursor_line);
+                let chars: Vec<char> = line_text.chars().collect();
+                let c = chars.get(self.cursor_col).unwrap_or(&' ');
+
+                // If we moved onto a word char, check if it's the start
+                if !c.is_whitespace() {
+                    // Check if prev is whitespace or start of line
+                    if self.cursor_col == 0 {
+                        break;
+                    }
+                    let prev = chars.get(self.cursor_col - 1).unwrap_or(&' ');
+                    if prev.is_whitespace() {
+                        break;
+                    }
+                }
+                // If we are on whitespace, keep going back (loop continues)
+            } else {
+                // Start of line, go to prev line end
+                if self.cursor_line > 0 {
+                    self.cursor_line -= 1;
+                    let line_len = buffer.line_length(self.cursor_line);
+                    // Set to end of line, but we need strictly inside?
+                    // Vim 'b' from start of line goes to end of prev line's last word.
+                    self.cursor_col = if line_len > 0 { line_len } else { 0 };
+                } else {
+                    break; // Start of file
+                }
+            }
+        }
+    }
+
+    pub fn move_to_start_of_file(&mut self) {
+        self.cursor_line = 0;
+        self.cursor_col = 0;
+    }
+
+    pub fn move_to_end_of_file(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        let count = buffer.line_count();
+        if count > 0 {
+            self.cursor_line = count - 1;
+            self.cursor_col = 0; // Ideally end of line? standard G goes to start of last line usually?
+            // User request just said "G to move to the end of the file".
+        }
+    }
+
+    pub fn move_word_end_forward(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        // 1. Advance once
+        if self.cursor_col + 1 < buffer.line_length(self.cursor_line) {
+            self.cursor_col += 1;
+        } else if self.cursor_line + 1 < buffer.line_count() {
+            self.cursor_line += 1;
+            self.cursor_col = 0;
+        } else {
+            return;
+        }
+
+        loop {
+            let buffer = &self.buffers[self.current_focused_index];
+            let line_text = buffer.text.line(self.cursor_line);
+            let chars: Vec<char> = line_text.chars().collect();
+
+            if self.cursor_col >= chars.len() {
+                break;
+            }
+
+            let c = chars[self.cursor_col];
+
+            if c.is_whitespace() {
+                // Skip whitespace
+                if self.cursor_col + 1 < chars.len() {
+                    self.cursor_col += 1;
+                } else if self.cursor_line + 1 < buffer.line_count() {
+                    self.cursor_line += 1;
+                    self.cursor_col = 0;
+                } else {
+                    break;
+                }
+            } else {
+                // Check next char
+                let next_idx = self.cursor_col + 1;
+                if next_idx >= chars.len() {
+                    break;
+                }
+                let next_c = chars[next_idx];
+                if next_c.is_whitespace() {
+                    break;
+                }
+                self.cursor_col += 1;
+            }
+        }
+    }
+
+    pub fn move_to_line_end(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        let line_text = buffer.text.line(self.cursor_line);
+        let len = line_text.chars().count(); // Chars count
+
+        // Exclude newline if present
+        let chars: Vec<char> = line_text.chars().collect();
+        if let Some(last) = chars.last() {
+            if *last == '\n' || *last == '\r' {
+                self.cursor_col = if len > 1 { len - 2 } else { 0 };
+                return;
+            }
+        }
+        self.cursor_col = if len > 0 { len - 1 } else { 0 };
+    }
+
+    pub fn move_to_line_start_non_whitespace(&mut self) {
+        let buffer = &self.buffers[self.current_focused_index];
+        let line_text = buffer.text.line(self.cursor_line);
+
+        let mut idx = 0;
+        for c in line_text.chars() {
+            if !c.is_whitespace() {
+                break;
+            }
+            idx += 1;
+        }
+        // If line is all whitespace, maybe go to end?
+        // But let's clamp to line length - 1 (before newline) if possible.
+        let len = buffer.line_length(self.cursor_line);
+
+        // Handle empty lines or just newline
+        if len == 0 || (len == 1 && idx == 1) {
+            // mostly newline
+            self.cursor_col = 0;
+        } else if idx >= len {
+            self.cursor_col = len - 1;
+        } else {
+            self.cursor_col = idx;
+        }
+    }
 }
 
 impl Editor<NavigateMode> {
     pub fn handle_input(&mut self, key: KeyEvent) -> EditorAction {
         let mut action = EditorAction::None;
+
+        // Handle pending sequences (like 'd' waiting for 'w')
+        if self.input_seq == "d" {
+            if let Char('w') = key.code {
+                self.delete_to_next_whitespace();
+                self.input_seq.clear();
+                return EditorAction::None;
+            } else {
+                self.input_seq.clear();
+            }
+        } else if self.input_seq == "g" {
+            if let Char('g') = key.code {
+                self.move_to_start_of_file();
+                self.input_seq.clear();
+                return EditorAction::None;
+            } else {
+                self.input_seq.clear();
+            }
+        }
+
         match key.code {
             Char('i') => action = EditorAction::EnterEditMode,
-            Char('a') => action = EditorAction::EnterEditMode,
+            Char('a') => {
+                self.move_cursor_right();
+                action = EditorAction::EnterEditMode;
+            }
             Char('o') => {
                 action = EditorAction::EnterEditModeInNewLine;
             }
+            Char('d') => {
+                self.input_seq.push('d');
+            }
+            Char('g') => {
+                self.input_seq.push('g');
+            }
+            Char('w') => self.move_word_forward(),
+            Char('e') => self.move_word_end_forward(),
+            Char('b') => self.move_word_backward(),
+            Char('G') => self.move_to_end_of_file(),
+            Char('^') => self.move_to_line_start_non_whitespace(),
+            Char('$') => self.move_to_line_end(),
             Char(':') => action = EditorAction::EnterCommandMode,
             Char('v') => action = EditorAction::EnterSelectMode,
             Char('h') => self.move_cursor_left(),
             Char('l') => self.move_cursor_right(),
             Char('k') => self.move_cursor_up(),
             Char('j') => self.move_cursor_down(),
+            Char('u') => self.undo(),
+            Char('U') => self.redo(),
             KeyCode::Tab => self.buffer_switch_forward(),
             KeyCode::BackTab => self.buffer_switch_backward(),
             _ => {}
@@ -235,7 +536,8 @@ impl Editor<NavigateMode> {
         action
     }
 
-    pub fn enter_edit_mode(self) -> Editor<EditMode> {
+    pub fn enter_edit_mode(mut self) -> Editor<EditMode> {
+        self.get_active_buffer_mut().save_snapshot();
         self.transition()
     }
 
@@ -293,12 +595,6 @@ impl Editor<EditMode> {
             buffer.delete_char(self.cursor_line, self.cursor_col - 1);
             self.cursor_col -= 1;
         }
-    }
-
-    pub fn delete_to_next_whitespace(&mut self) {
-        todo!(
-            "Implement dw to delete word, but how it actually works is that it deletes the characters till a whitespace occurs."
-        )
     }
 
     pub fn delete_line(&mut self) {
