@@ -20,6 +20,13 @@ A Vim-Like Modal Text Editor with a TUI. Built using Rust.
 
 ---
 
+# Implemented
+- Open any file in Heliolisk
+- Vim Keybinds
+- Rope Data Structure to store text
+- Save files
+- Modal Editing
+
 # Concepts Learning
 - State Representation using Phantom Data
 - Representing Data in Structs
