@@ -16,7 +16,7 @@ use crate::{
     file_ops,
 };
 
-/// The Global App State for Helios
+/// The Global App State for Heliolisk
 /// # Stores
 /// - Editor State
 /// - Quittable State
@@ -140,7 +140,7 @@ impl Helios {
                 if cursor_x < layout[0].x + layout[0].width - 1
                     && cursor_y < layout[0].y + layout[0].height - 1
                 {
-                    frame.set_cursor(cursor_x, cursor_y);
+                    frame.set_cursor_position((cursor_x, cursor_y));
                 }
             }
         }

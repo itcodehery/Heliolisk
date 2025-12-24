@@ -8,9 +8,7 @@ pub struct HeliosRope {
 
 impl HeliosRope {
     pub fn new() -> Self {
-        Self {
-            inner: Rope::new(),
-        }
+        Self { inner: Rope::new() }
     }
 
     pub fn from_str(text: &str) -> Self {
@@ -27,7 +25,7 @@ impl HeliosRope {
         self.inner.len_chars()
     }
 
-    pub fn line(&self, line_idx: usize) -> Cow<str> {
+    pub fn line(&self, line_idx: usize) -> Cow<'_, str> {
         if line_idx >= self.len_lines() {
             return Cow::Borrowed("");
         }

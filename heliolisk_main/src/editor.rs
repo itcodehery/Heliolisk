@@ -185,8 +185,7 @@ impl<S> Editor<S> {
     }
 
     pub fn get_buffers(&self) -> &Vec<HBuffer> {
-        let buffers = &self.buffers;
-        buffers
+        &self.buffers
     }
 
     pub fn get_active_buffer(&self) -> &HBuffer {
@@ -203,11 +202,11 @@ impl<S> Editor<S> {
     }
 
     pub fn check_error_expiry(&mut self) {
-        if let Some(time) = self.error_timestamp {
-            if time.elapsed() >= std::time::Duration::from_secs(10) {
-                self.error_line.clear();
-                self.error_timestamp = None;
-            }
+        if let Some(time) = self.error_timestamp
+            && time.elapsed() >= std::time::Duration::from_secs(10)
+        {
+            self.error_line.clear();
+            self.error_timestamp = None;
         }
     }
 
@@ -250,19 +249,13 @@ impl<S> Editor<S> {
         }
 
         let mut delete_count = 0;
-        let mut started_on_whitespace = chars[self.cursor_col].is_whitespace();
+        let started_on_whitespace = chars[self.cursor_col].is_whitespace();
 
-        for i in self.cursor_col..chars.len() {
-            let c = chars[i];
+        for ch in chars.iter().skip(self.cursor_col) {
+            let c = ch;
 
-            if started_on_whitespace {
-                if !c.is_whitespace() {
-                    break;
-                }
-            } else {
-                if c.is_whitespace() {
-                    break;
-                }
+            if (started_on_whitespace && !c.is_whitespace()) || c.is_whitespace() {
+                break;
             }
             delete_count += 1;
         }
@@ -276,7 +269,6 @@ impl<S> Editor<S> {
 
     pub fn move_word_forward(&mut self) {
         let buffer = &self.buffers[self.current_focused_index];
-        let mut found_word_start = false;
 
         loop {
             let line_len = buffer.line_length(self.cursor_line);
@@ -319,10 +311,10 @@ impl<S> Editor<S> {
                     self.cursor_col = 0;
                     // Check if 0 is a word char
                     let line_text = buffer.text.line(self.cursor_line);
-                    if let Some(c) = line_text.chars().next() {
-                        if !c.is_whitespace() {
-                            break;
-                        }
+                    if let Some(c) = line_text.chars().next()
+                        && !c.is_whitespace()
+                    {
+                        break;
                     }
                 } else {
                     break; // End of file
@@ -441,11 +433,11 @@ impl<S> Editor<S> {
 
         // Exclude newline if present
         let chars: Vec<char> = line_text.chars().collect();
-        if let Some(last) = chars.last() {
-            if *last == '\n' || *last == '\r' {
-                self.cursor_col = if len > 1 { len - 2 } else { 0 };
-                return;
-            }
+        if let Some(last) = chars.last()
+            && (*last == '\n' || *last == '\r')
+        {
+            self.cursor_col = if len > 1 { len - 2 } else { 0 };
+            return;
         }
         self.cursor_col = if len > 0 { len - 1 } else { 0 };
     }
@@ -744,11 +736,9 @@ impl Editor<CommandMode> {
                         }
                     }
                     if splits.clone().count() == 2 {
-                        return EditorAction::Save(Some(
-                            splits.last().unwrap().to_string().clone(),
-                        ));
+                        EditorAction::Save(Some(splits.last().unwrap().to_string().clone()))
                     } else {
-                        return EditorAction::Save(None);
+                        EditorAction::Save(None)
                     }
                 } else {
                     EditorAction::None
