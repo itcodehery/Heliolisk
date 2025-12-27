@@ -3,7 +3,6 @@ use crate::rope::HeliosRope;
 /// Represents a single open document.
 ///
 /// Consists of lines and the document's file format as a String.
-#[allow(dead_code)]
 #[derive(Clone, Default)]
 pub struct HBuffer {
     pub text: HeliosRope,
