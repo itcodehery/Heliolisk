@@ -61,6 +61,7 @@ pub enum EditorAction {
     EnterNavigateMode,
     DebugPrintLinesToConsole,
     DebugPrintCurrentLineToConsole,
+    AddNewBuffer,
     None,
 }
 
@@ -80,6 +81,14 @@ impl Editor {
             input_seq: String::new(),
             state: PhantomData::<NavigateMode>,
         }
+    }
+
+    pub fn add_new_buffer(&mut self) {
+        dbg!("Adding new Buffer");
+        let new_buf = HBuffer::new();
+
+        self.buffers.push(new_buf);
+        self.current_focused_index = self.buffers.len() - 1;
     }
 
     pub fn buffer_switch_forward(&mut self) {

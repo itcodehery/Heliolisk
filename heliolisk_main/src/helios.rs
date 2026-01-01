@@ -268,6 +268,7 @@ impl Helios {
                         self.should_quit = true;
                         EditorState::Command(editor)
                     }
+                    EditorAction::AddNewBuffer => EditorState::Command(editor),
                     _ => EditorState::Command(editor),
                 },
             });
