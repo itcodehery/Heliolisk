@@ -212,7 +212,7 @@ impl<S> Editor<S> {
 
     pub fn check_error_expiry(&mut self) {
         if let Some(time) = self.error_timestamp
-            && time.elapsed() >= std::time::Duration::from_secs(10)
+            && time.elapsed() >= std::time::Duration::from_secs(5)
         {
             self.error_line.clear();
             self.error_timestamp = None;

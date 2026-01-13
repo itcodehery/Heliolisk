@@ -55,7 +55,6 @@ impl HeliosRope {
         self.inner.char_to_line(char_idx)
     }
 
-    /// Returns the length of a specific line in characters, including newline.
     pub fn line_len(&self, line_idx: usize) -> usize {
         if line_idx >= self.len_lines() {
             return 0;

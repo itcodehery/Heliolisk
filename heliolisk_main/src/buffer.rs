@@ -41,22 +41,17 @@ impl HBuffer {
     }
 
     pub fn insert_char(&mut self, line_idx: usize, col_idx: usize, c: char) {
-        // We need to find the char index from line/col
         let line_start_char = self.text.line_to_char(line_idx);
         let char_idx = line_start_char + col_idx;
 
-        // Safety: Ensure we don't insert past the line end (careful with newlines)
-        // For now, simple insertion. Ropes handle newlines as characters.
         self.text.insert_char(char_idx, c);
     }
 
     pub fn insert_line(&mut self, line_idx: usize, col_idx: usize) {
-        // Inserting a line is just inserting a newline char
         self.insert_char(line_idx, col_idx, '\n');
     }
 
     pub fn delete_line(&mut self, line_index: usize) {
-        // Delete a range of characters corresponding to the line
         let start_char = self.text.line_to_char(line_index);
         let end_char = self.text.line_to_char(line_index + 1);
 
@@ -67,7 +62,6 @@ impl HBuffer {
         let line_start_char = self.text.line_to_char(line_idx);
         let char_idx = line_start_char + col_idx;
 
-        // Ensure we are deleting a valid char
         if char_idx < self.text.len_chars() {
             self.text.remove(char_idx..char_idx + 1);
         }
