@@ -52,10 +52,23 @@ impl HBuffer {
     }
 
     pub fn delete_line(&mut self, line_index: usize) {
+        if line_index >= self.line_count() {
+            return;
+        }
+
         let start_char = self.text.line_to_char(line_index);
         let end_char = self.text.line_to_char(line_index + 1);
 
-        self.text.remove(start_char..end_char);
+        if start_char < end_char {
+            self.text.remove(start_char..end_char);
+        } else if self.text.len_chars() > 0 && start_char > 0 {
+            // If deleting the trailing empty/last line, remove previous newline if applicable
+            let prev_char = self.text.line_to_char(line_index.saturating_sub(1));
+            let line_len = self.line_length(line_index.saturating_sub(1));
+            if line_len > 0 {
+                self.text.remove((prev_char + line_len - 1)..(prev_char + line_len));
+            }
+        }
     }
 
     pub fn delete_char(&mut self, line_idx: usize, col_idx: usize) {

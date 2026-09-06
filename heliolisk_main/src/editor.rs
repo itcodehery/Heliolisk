@@ -104,7 +104,7 @@ impl Editor {
     pub fn buffer_switch_backward(&mut self) {
         if self.buffers.len() < 2 {
         } else if self.current_focused_index == 0 {
-            self.current_focused_index = self.buffers.len();
+            self.current_focused_index = self.buffers.len() - 1;
         } else {
             self.current_focused_index -= 1;
         }
@@ -602,7 +602,9 @@ impl Editor<EditMode> {
         let buffer = &mut self.buffers[self.current_focused_index];
 
         let line_to_delete = self.cursor_line;
-        self.cursor_line -= 1;
+        if self.cursor_line > 0 {
+            self.cursor_line -= 1;
+        }
         buffer.delete_line(line_to_delete);
     }
 
@@ -774,5 +776,36 @@ impl Editor<CommandMode> {
             }
             _ => EditorAction::None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_buffer_switch_backward_bounds() {
+        let mut editor = Editor::new(vec![HBuffer::new(), HBuffer::new()]);
+        assert_eq!(editor.current_focused_index, 0);
+
+        // Switching backward from 0 should wrap to len - 1 (which is 1)
+        editor.buffer_switch_backward();
+        assert_eq!(editor.current_focused_index, 1);
+        let _ = editor.get_active_buffer(); // Must not panic!
+
+        editor.buffer_switch_backward();
+        assert_eq!(editor.current_focused_index, 0);
+        let _ = editor.get_active_buffer();
+    }
+
+    #[test]
+    fn test_delete_line_bounds() {
+        let editor = Editor::new(vec![HBuffer::new()]);
+        let mut edit_editor = editor.enter_edit_mode();
+        assert_eq!(edit_editor.cursor_line, 0);
+
+        // Deleting line when cursor_line is 0 must not underflow or panic
+        edit_editor.delete_line();
+        assert_eq!(edit_editor.cursor_line, 0);
     }
 }

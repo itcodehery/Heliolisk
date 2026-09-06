@@ -102,11 +102,11 @@ impl Helios {
 
         // 3. Render Cursor and manage offsets (Immutable access)
         if let Some(state) = &self.editor_state {
-            let buffers = match state {
-                EditorState::Navigate(ed) => ed.get_buffers(),
-                EditorState::Command(ed) => ed.get_buffers(),
-                EditorState::Edit(ed) => ed.get_buffers(),
-                EditorState::Select(ed) => ed.get_buffers(),
+            let active_buffer = match state {
+                EditorState::Navigate(ed) => ed.get_active_buffer(),
+                EditorState::Command(ed) => ed.get_active_buffer(),
+                EditorState::Edit(ed) => ed.get_active_buffer(),
+                EditorState::Select(ed) => ed.get_active_buffer(),
             };
 
             let height = (layout[0].height as usize).saturating_sub(2);
@@ -126,7 +126,7 @@ impl Helios {
 
             // Calculate visual cursor position relative to the viewport
             if cursor_line >= scroll_offset && cursor_line < scroll_offset + height {
-                let line_text = buffers[0].text.line(cursor_line);
+                let line_text = active_buffer.text.line(cursor_line);
                 let visual_col: usize = line_text
                     .chars()
                     .take(cursor_col)
@@ -310,11 +310,11 @@ impl Widget for &Helios {
             .constraints(vec![Constraint::Min(1), Constraint::Length(1)])
             .split(area);
         if let Some(state) = &self.editor_state {
-            let buffers = match state {
-                EditorState::Navigate(ed) => ed.get_buffers(),
-                EditorState::Command(ed) => ed.get_buffers(),
-                EditorState::Edit(ed) => ed.get_buffers(),
-                EditorState::Select(ed) => ed.get_buffers(),
+            let active_buffer = match state {
+                EditorState::Navigate(ed) => ed.get_active_buffer(),
+                EditorState::Command(ed) => ed.get_active_buffer(),
+                EditorState::Edit(ed) => ed.get_active_buffer(),
+                EditorState::Select(ed) => ed.get_active_buffer(),
             };
 
             let state_name = format!("{}", state);
@@ -336,7 +336,7 @@ impl Widget for &Helios {
             let main_block = Block::bordered()
                 .title_bottom(state_name)
                 .title_top(
-                    buffers[0]
+                    active_buffer
                         .file_path
                         .clone()
                         .unwrap_or_else(|| ".txt".to_string()),
@@ -355,7 +355,7 @@ impl Widget for &Helios {
             let ratatui_lines: Vec<ratatui::text::Line> = (0..viewport_height)
                 .map(|i| {
                     let line_idx = scroll_offset + i;
-                    let line_cow = buffers[0].text.line(line_idx);
+                    let line_cow = active_buffer.text.line(line_idx);
                     // Remove newline characters for rendering if necessary, though Ratatui handles them usually.
                     // Ropey lines include newlines.
                     let line_str = line_cow
