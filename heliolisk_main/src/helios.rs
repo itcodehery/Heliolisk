@@ -10,18 +10,14 @@ use ratatui::{
 };
 
 use crate::{
-    EditorState,
     buffer::HBuffer,
-    editor::{Editor, EditorAction, NavigateMode},
+    editor::{Editor, EditorAction, Mode},
     file_ops,
 };
 
 /// The Global App State for Heliolisk
-/// # Stores
-/// - Editor State
-/// - Quittable State
 pub struct Helios {
-    editor_state: Option<EditorState>,
+    editor: Editor,
     should_quit: bool,
     save_tx: Sender<std::result::Result<String, String>>,
     save_rx: Receiver<std::result::Result<String, String>>,
@@ -32,7 +28,7 @@ impl Helios {
         dbg!("Helios: Initialized Editor State");
         let (save_tx, save_rx) = mpsc::channel();
         Self {
-            editor_state: Some(EditorState::Navigate(editor)),
+            editor,
             should_quit: false,
             save_tx,
             save_rx,
@@ -51,14 +47,7 @@ impl Helios {
     }
 
     pub fn check_error_expiry(&mut self) {
-        if let Some(state) = &mut self.editor_state {
-            match state {
-                EditorState::Navigate(ed) => ed.check_error_expiry(),
-                EditorState::Command(ed) => ed.check_error_expiry(),
-                EditorState::Edit(ed) => ed.check_error_expiry(),
-                EditorState::Select(ed) => ed.check_error_expiry(),
-            }
-        }
+        self.editor.check_error_expiry();
     }
 
     pub fn check_background_tasks(&mut self) {
@@ -67,14 +56,7 @@ impl Helios {
                 Ok(s) => s,
                 Err(e) => format!("Error: {}", e),
             };
-            if let Some(state) = &mut self.editor_state {
-                match state {
-                    EditorState::Navigate(ed) => ed.set_error_line(msg),
-                    EditorState::Command(ed) => ed.set_error_line(msg),
-                    EditorState::Edit(ed) => ed.set_error_line(msg),
-                    EditorState::Select(ed) => ed.set_error_line(msg),
-                }
-            }
+            self.editor.set_error_line(msg);
         }
     }
 
@@ -87,61 +69,34 @@ impl Helios {
             .split(area);
 
         // 1. Update Viewport (Mutation phase)
-        if let Some(state) = &mut self.editor_state {
-            let height = (layout[0].height as usize).saturating_sub(2);
-            match state {
-                EditorState::Navigate(ed) => ed.update_viewport(height),
-                EditorState::Command(ed) => ed.update_viewport(height),
-                EditorState::Edit(ed) => ed.update_viewport(height),
-                EditorState::Select(ed) => ed.update_viewport(height),
-            }
-        }
+        let height = (layout[0].height as usize).saturating_sub(2);
+        self.editor.update_viewport(height);
 
         // 2. Render Content (Immutable render)
         frame.render_widget(&*self, area);
 
         // 3. Render Cursor and manage offsets (Immutable access)
-        if let Some(state) = &self.editor_state {
-            let active_buffer = match state {
-                EditorState::Navigate(ed) => ed.get_active_buffer(),
-                EditorState::Command(ed) => ed.get_active_buffer(),
-                EditorState::Edit(ed) => ed.get_active_buffer(),
-                EditorState::Select(ed) => ed.get_active_buffer(),
-            };
+        let active_buffer = self.editor.get_active_buffer();
+        let (cursor_col, cursor_line) = self.editor.get_cursor_position();
+        let scroll_offset = self.editor.get_scroll_offset();
 
-            let height = (layout[0].height as usize).saturating_sub(2);
-            let (cursor_col, cursor_line) = match state {
-                EditorState::Navigate(ed) => ed.get_cursor_position(),
-                EditorState::Command(ed) => ed.get_cursor_position(),
-                EditorState::Edit(ed) => ed.get_cursor_position(),
-                EditorState::Select(ed) => ed.get_cursor_position(),
-            };
+        // Calculate visual cursor position relative to the viewport
+        if cursor_line >= scroll_offset && cursor_line < scroll_offset + height {
+            let line_text = active_buffer.text.line(cursor_line);
+            let visual_col: usize = line_text
+                .chars()
+                .take(cursor_col)
+                .map(|c| if c == '\t' { 4 } else { 1 })
+                .sum();
 
-            let scroll_offset = match state {
-                EditorState::Navigate(ed) => ed.get_scroll_offset(),
-                EditorState::Command(ed) => ed.get_scroll_offset(),
-                EditorState::Edit(ed) => ed.get_scroll_offset(),
-                EditorState::Select(ed) => ed.get_scroll_offset(),
-            };
+            let visual_cursor_y = cursor_line - scroll_offset;
+            let cursor_x = layout[0].x + visual_col as u16 + 1; // +1 for left border
+            let cursor_y = layout[0].y + visual_cursor_y as u16 + 1; // +1 for top border
 
-            // Calculate visual cursor position relative to the viewport
-            if cursor_line >= scroll_offset && cursor_line < scroll_offset + height {
-                let line_text = active_buffer.text.line(cursor_line);
-                let visual_col: usize = line_text
-                    .chars()
-                    .take(cursor_col)
-                    .map(|c| if c == '\t' { 4 } else { 1 })
-                    .sum();
-
-                let visual_cursor_y = cursor_line - scroll_offset;
-                let cursor_x = layout[0].x + visual_col as u16 + 1; // +1 for left border
-                let cursor_y = layout[0].y + visual_cursor_y as u16 + 1; // +1 for top border
-
-                if cursor_x < layout[0].x + layout[0].width - 1
-                    && cursor_y < layout[0].y + layout[0].height - 1
-                {
-                    frame.set_cursor_position((cursor_x, cursor_y));
-                }
+            if cursor_x < layout[0].x + layout[0].width - 1
+                && cursor_y < layout[0].y + layout[0].height - 1
+            {
+                frame.set_cursor_position((cursor_x, cursor_y));
             }
         }
     }
@@ -149,8 +104,6 @@ impl Helios {
     fn handle_events(&mut self) -> Result<()> {
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
-                // it's important to check that the event is a key press event as
-                // crossterm also emits key release and repeat events on Windows.
                 Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
                     self.handle_key_event(key_event)
                 }
@@ -161,117 +114,79 @@ impl Helios {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) {
-        if let Some(state) = self.editor_state.take() {
-            self.editor_state = Some(match state {
-                EditorState::Navigate(mut editor) => match editor.handle_input(key_event) {
-                    EditorAction::Quit => {
-                        self.should_quit = true;
-                        EditorState::Navigate(editor)
-                    }
-                    EditorAction::EnterEditMode => EditorState::Edit(editor.enter_edit_mode()),
-                    EditorAction::EnterEditModeInNewLine => {
-                        let mut ed = editor.enter_edit_mode();
-                        ed.open_line_below();
-                        EditorState::Edit(ed)
-                    }
-                    EditorAction::EnterCommandMode => {
-                        EditorState::Command(editor.enter_command_mode())
-                    }
-                    EditorAction::EnterSelectMode => {
-                        EditorState::Select(editor.enter_select_mode())
-                    }
-                    _ => EditorState::Navigate(editor),
-                },
-                EditorState::Edit(mut editor) => match editor.handle_input(key_event) {
-                    EditorAction::EnterNavigateMode => {
-                        EditorState::Navigate(editor.enter_navigate_mode())
-                    }
-                    EditorAction::EnterSelectMode => {
-                        EditorState::Select(editor.enter_select_mode())
-                    }
-                    _ => EditorState::Edit(editor),
-                },
-                EditorState::Select(mut editor) => match editor.handle_input(key_event) {
-                    EditorAction::EnterNavigateMode => {
-                        EditorState::Navigate(editor.enter_navigate_mode())
-                    }
-                    EditorAction::EnterCommandMode => {
-                        EditorState::Command(editor.enter_command_mode())
-                    }
-                    EditorAction::EnterEditMode => EditorState::Edit(editor.enter_edit_mode()),
-                    _ => EditorState::Select(editor),
-                },
-                EditorState::Command(mut editor) => match editor.handle_input(key_event) {
-                    EditorAction::Quit => {
-                        self.should_quit = true;
-                        EditorState::Command(editor)
-                    }
-                    EditorAction::EnterNavigateMode => {
-                        EditorState::Navigate(editor.enter_navigate_mode())
-                    }
-                    EditorAction::Save(file_name) => {
-                        // Determine effective filename: User input > Existing Buffer Path > Default
-                        let current_path = editor.get_active_buffer().file_path.clone();
-                        let effective_name = file_name
-                            .clone()
-                            .or(current_path)
-                            .unwrap_or_else(|| "helios_test.txt".to_string());
+        let action = self.editor.handle_input(key_event);
+        match action {
+            EditorAction::Quit | EditorAction::QuitAll => {
+                self.should_quit = true;
+            }
+            EditorAction::EnterNavigateMode => {
+                self.editor.set_mode(Mode::Navigate);
+            }
+            EditorAction::EnterEditMode => {
+                self.editor.enter_edit_mode();
+            }
+            EditorAction::EnterEditModeInNewLine => {
+                self.editor.enter_edit_mode();
+                self.editor.open_line_below();
+            }
+            EditorAction::EnterCommandMode => {
+                self.editor.enter_command_mode();
+            }
+            EditorAction::EnterSelectMode => {
+                self.editor.enter_select_mode();
+            }
+            EditorAction::Save(file_name) => {
+                let current_path = self.editor.get_active_buffer().file_path.clone();
+                let effective_name = file_name
+                    .or(current_path)
+                    .unwrap_or_else(|| "helios_test.txt".to_string());
 
-                        // Update buffer path so future saves use it
-                        editor.get_active_buffer_mut().file_path = Some(effective_name.clone());
+                self.editor.get_active_buffer_mut().file_path = Some(effective_name.clone());
 
-                        let buffer_clone = editor.get_active_buffer().clone();
-                        let tx = self.save_tx.clone();
+                let buffer_clone = self.editor.get_active_buffer().clone();
+                let tx = self.save_tx.clone();
 
-                        editor.set_error_line("Saving in background...".to_string());
+                self.editor.set_error_line("Saving in background...".to_string());
 
-                        std::thread::spawn(move || {
-                            match file_ops::write_buffer_to_file(
-                                &buffer_clone,
-                                Some(effective_name.clone()),
-                            ) {
-                                Ok(_) => {
-                                    let _ = tx.send(Ok(format!("Saved {}", effective_name)));
-                                }
-                                Err(e) => {
-                                    let _ = tx.send(Err(format!("Save failed: {}", e)));
-                                }
-                            }
-                        });
-
-                        EditorState::Command(editor)
-                    }
-                    EditorAction::SaveAndQuit(file_name) => {
-                        // Determine effective filename: User input > Existing Buffer Path > Default
-                        let current_path = editor.get_active_buffer().file_path.clone();
-                        let effective_name = file_name
-                            .clone()
-                            .or(current_path)
-                            .unwrap_or_else(|| "helios_test.txt".to_string());
-
-                        // We use get_active_buffer() instead of direct buffers access for consistency
-                        let buffer = editor.get_active_buffer();
-
-                        match file_ops::write_buffer_to_file(buffer, Some(effective_name)) {
-                            Ok(_) => {
-                                self.should_quit = true;
-                            }
-                            Err(s) => {
-                                let mut status = String::from("Error Occurred... ");
-                                status.push_str(&s);
-                                editor.set_error_line(status);
-                            }
+                std::thread::spawn(move || {
+                    match file_ops::write_buffer_to_file(
+                        &buffer_clone,
+                        Some(effective_name.clone()),
+                    ) {
+                        Ok(_) => {
+                            let _ = tx.send(Ok(format!("Saved {}", effective_name)));
                         }
-                        EditorState::Command(editor)
+                        Err(e) => {
+                            let _ = tx.send(Err(format!("Save failed: {}", e)));
+                        }
                     }
-                    EditorAction::QuitAll => {
+                });
+            }
+            EditorAction::SaveAndQuit(file_name) => {
+                let current_path = self.editor.get_active_buffer().file_path.clone();
+                let effective_name = file_name
+                    .or(current_path)
+                    .unwrap_or_else(|| "helios_test.txt".to_string());
+
+                let buffer = self.editor.get_active_buffer();
+
+                match file_ops::write_buffer_to_file(buffer, Some(effective_name)) {
+                    Ok(_) => {
                         self.should_quit = true;
-                        EditorState::Command(editor)
                     }
-                    EditorAction::AddNewBuffer => EditorState::Command(editor),
-                    _ => EditorState::Command(editor),
-                },
-            });
+                    Err(s) => {
+                        let mut status = String::from("Error Occurred... ");
+                        status.push_str(&s);
+                        self.editor.set_error_line(status);
+                    }
+                }
+            }
+            EditorAction::AddNewBuffer => {
+                self.editor.add_new_buffer();
+            }
+            EditorAction::DebugPrintLinesToConsole => {}
+            EditorAction::DebugPrintCurrentLineToConsole => {}
+            EditorAction::None => {}
         }
     }
 }
@@ -283,7 +198,6 @@ pub fn initialize_app() -> Helios {
         match file_ops::load_file(&path) {
             Ok(buffer) => buffer,
             Err(_) => {
-                // File likely doesn't exist, create new buffer with this path
                 let mut buffer = HBuffer::new();
                 buffer.file_path = Some(file_name.clone());
                 buffer.file_format = path
@@ -298,7 +212,7 @@ pub fn initialize_app() -> Helios {
         HBuffer::new()
     };
 
-    let editor = Editor::<NavigateMode>::new(vec![initial_buffer]);
+    let editor = Editor::new(vec![initial_buffer]);
 
     Helios::init(editor)
 }
@@ -309,90 +223,60 @@ impl Widget for &Helios {
             .direction(Direction::Vertical)
             .constraints(vec![Constraint::Min(1), Constraint::Length(1)])
             .split(area);
-        if let Some(state) = &self.editor_state {
-            let active_buffer = match state {
-                EditorState::Navigate(ed) => ed.get_active_buffer(),
-                EditorState::Command(ed) => ed.get_active_buffer(),
-                EditorState::Edit(ed) => ed.get_active_buffer(),
-                EditorState::Select(ed) => ed.get_active_buffer(),
-            };
 
-            let state_name = format!("{}", state);
-            let cursor_position = match state {
-                EditorState::Navigate(e) => e.get_cursor_position(),
-                EditorState::Edit(e) => e.get_cursor_position(),
-                EditorState::Select(e) => e.get_cursor_position(),
-                EditorState::Command(e) => e.get_cursor_position(),
-            };
-            let (char_pos, line_pos) = cursor_position;
+        let active_buffer = self.editor.get_active_buffer();
+        let mode = self.editor.mode();
+        let state_name = format!("{}", mode);
+        let (char_pos, line_pos) = self.editor.get_cursor_position();
 
-            let state_name = match state {
-                EditorState::Navigate(_) => state_name.white(),
-                EditorState::Edit(_) => state_name.green(),
-                EditorState::Select(_) => state_name.yellow(),
-                EditorState::Command(_) => state_name.light_red(),
-            };
+        let state_name = match mode {
+            Mode::Navigate => state_name.white(),
+            Mode::Edit => state_name.green(),
+            Mode::Select => state_name.yellow(),
+            Mode::Command => state_name.light_red(),
+        };
 
-            let main_block = Block::bordered()
-                .title_bottom(state_name)
-                .title_top(
-                    active_buffer
-                        .file_path
-                        .clone()
-                        .unwrap_or_else(|| ".txt".to_string()),
-                )
-                .title_bottom(format!("{}:{}", line_pos + 1, char_pos + 1));
+        let main_block = Block::bordered()
+            .title_bottom(state_name)
+            .title_top(
+                active_buffer
+                    .file_path
+                    .clone()
+                    .unwrap_or_else(|| ".txt".to_string()),
+            )
+            .title_bottom(format!("{}:{}", line_pos + 1, char_pos + 1));
 
-            let scroll_offset = match state {
-                EditorState::Navigate(e) => e.get_scroll_offset(),
-                EditorState::Edit(e) => e.get_scroll_offset(),
-                EditorState::Select(e) => e.get_scroll_offset(),
-                EditorState::Command(e) => e.get_scroll_offset(),
-            };
+        let scroll_offset = self.editor.get_scroll_offset();
+        let viewport_height = (layout[0].height as usize).saturating_sub(2);
 
-            let viewport_height = (layout[0].height as usize).saturating_sub(2);
+        let ratatui_lines: Vec<ratatui::text::Line> = (0..viewport_height)
+            .map(|i| {
+                let line_idx = scroll_offset + i;
+                let line_cow = active_buffer.text.line(line_idx);
+                let line_str = line_cow
+                    .trim_end_matches(['\n', '\r'])
+                    .replace('\t', "    ");
+                ratatui::text::Line::from(line_str)
+            })
+            .collect();
 
-            let ratatui_lines: Vec<ratatui::text::Line> = (0..viewport_height)
-                .map(|i| {
-                    let line_idx = scroll_offset + i;
-                    let line_cow = active_buffer.text.line(line_idx);
-                    // Remove newline characters for rendering if necessary, though Ratatui handles them usually.
-                    // Ropey lines include newlines.
-                    let line_str = line_cow
-                        .trim_end_matches(['\n', '\r'])
-                        .replace("\t", "    ");
-                    ratatui::text::Line::from(line_str)
-                })
-                .collect();
+        let para = Paragraph::new(ratatui_lines);
+        para.block(main_block).render(layout[0], buf);
 
-            let para = Paragraph::new(ratatui_lines);
-            para.block(main_block).render(layout[0], buf);
+        let command_text = self.editor.get_command_line();
+        let error_text = self.editor.get_error_line();
 
-            let command_text = match state {
-                EditorState::Navigate(ed) => ed.get_command_line(),
-                EditorState::Command(ed) => ed.get_command_line(),
-                EditorState::Edit(ed) => ed.get_command_line(),
-                EditorState::Select(ed) => ed.get_command_line(),
-            };
+        let status_text = if !error_text.is_empty() {
+            Paragraph::new(error_text).style(
+                ratatui::style::Style::default()
+                    .bg(ratatui::style::Color::Red)
+                    .fg(ratatui::style::Color::Black),
+            )
+        } else {
+            Paragraph::new(command_text)
+        };
 
-            let error_text = match state {
-                EditorState::Navigate(ed) => ed.get_error_line(),
-                EditorState::Command(ed) => ed.get_error_line(),
-                EditorState::Edit(ed) => ed.get_error_line(),
-                EditorState::Select(ed) => ed.get_error_line(),
-            };
-
-            let status_text = if !error_text.is_empty() {
-                Paragraph::new(error_text.clone()).style(
-                    ratatui::style::Style::default()
-                        .bg(ratatui::style::Color::Red)
-                        .fg(ratatui::style::Color::Black),
-                )
-            } else {
-                Paragraph::new(command_text.clone())
-            };
-
-            status_text.block(Block::new()).render(layout[1], buf);
-        }
+        status_text.block(Block::new()).render(layout[1], buf);
     }
 }
+

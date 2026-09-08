@@ -8,6 +8,9 @@ pub struct HBuffer {
     pub text: HeliosRope,
     pub file_format: String,
     pub file_path: Option<String>,
+    pub cursor_line: usize,
+    pub cursor_col: usize,
+    pub scroll_offset: usize,
     pub undo_stack: Vec<HeliosRope>,
     pub redo_stack: Vec<HeliosRope>,
 }
@@ -19,8 +22,37 @@ impl HBuffer {
             text: HeliosRope::new(),
             file_format: ".txt".to_string(),
             file_path: None,
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll_offset: 0,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+        }
+    }
+
+    pub fn clamp_cursor(&mut self) {
+        let lines = self.line_count();
+        if lines == 0 {
+            self.cursor_line = 0;
+            self.cursor_col = 0;
+            return;
+        }
+
+        if self.cursor_line >= lines {
+            self.cursor_line = lines - 1;
+        }
+
+        let line_len = self.line_length(self.cursor_line);
+        if self.cursor_col > line_len {
+            self.cursor_col = line_len;
+        }
+    }
+
+    pub fn update_viewport(&mut self, height: usize) {
+        if self.cursor_line < self.scroll_offset {
+            self.scroll_offset = self.cursor_line;
+        } else if self.cursor_line >= self.scroll_offset + height {
+            self.scroll_offset = self.cursor_line.saturating_sub(height) + 1;
         }
     }
 
