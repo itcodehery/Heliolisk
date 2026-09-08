@@ -1,8 +1,12 @@
 mod buffer;
+mod config;
 mod editor;
+mod explorer;
 mod file_ops;
 mod helios;
+mod lsp;
 mod rope;
+mod syntax;
 
 use crate::helios::{Helios, initialize_app};
 

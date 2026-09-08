@@ -1,18 +1,24 @@
 use std::io::Result;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use ratatui::{
     DefaultTerminal, Frame,
-    crossterm::event::{self, Event, KeyEvent, KeyEventKind},
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     layout::{Constraint, Direction, Layout, Rect},
-    style::Stylize,
+    style::Style,
+    text::{Line, Span},
     widgets::{Block, Paragraph, Widget},
 };
 
 use crate::{
     buffer::HBuffer,
+    config::{HelioliskConfig, Theme, ThemePreset},
     editor::{Editor, EditorAction, Mode},
+    explorer::{FileExplorer, widget::FileExplorerWidget},
     file_ops,
+    lsp::{HoverPopupWidget, HoverState, LspExplorerWidget, LspRegistry},
+    syntax::SyntaxHighlighter,
 };
 
 pub struct SaveResult {
@@ -21,25 +27,63 @@ pub struct SaveResult {
     pub result: std::result::Result<String, String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusedPane {
+    Editor,
+    Explorer,
+    LspManager,
+}
+
 /// The Global App State for Heliolisk
 pub struct Helios {
-    editor: Editor,
-    should_quit: bool,
-    buffer_save_versions: std::collections::HashMap<usize, u64>,
-    save_tx: Sender<SaveResult>,
-    save_rx: Receiver<SaveResult>,
+    pub editor: Editor,
+    pub config: HelioliskConfig,
+    pub theme: Theme,
+    pub explorer: FileExplorer,
+    pub hover: HoverState,
+    pub lsp_registry: LspRegistry,
+    pub focused_pane: FocusedPane,
+    pub should_quit: bool,
+    pub buffer_save_versions: std::collections::HashMap<usize, u64>,
+    pub save_tx: Sender<SaveResult>,
+    pub save_rx: Receiver<SaveResult>,
 }
 
 impl Helios {
     pub fn init(editor: Editor) -> Self {
         dbg!("Helios: Initialized Editor State");
         let (save_tx, save_rx) = mpsc::channel();
+        let config = HelioliskConfig::load();
+        let theme_preset = ThemePreset::from_name(&config.theme).unwrap_or(ThemePreset::TokyoNight);
+        let theme = Theme::preset(theme_preset);
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let explorer = FileExplorer::new(&current_dir, config.sidebar_width);
+        let lsp_registry = LspRegistry::new(&config.enabled_lsps);
+
         Self {
             editor,
+            config,
+            theme,
+            explorer,
+            hover: HoverState::new(),
+            lsp_registry,
+            focused_pane: FocusedPane::Editor,
             should_quit: false,
             buffer_save_versions: std::collections::HashMap::new(),
             save_tx,
             save_rx,
+        }
+    }
+
+    pub fn set_theme(&mut self, name: &str) {
+        if let Some(preset) = ThemePreset::from_name(name) {
+            self.theme = Theme::preset(preset);
+            self.editor.set_error_line(format!("Switched theme to {}", self.theme.name));
+        } else {
+            self.editor.set_error_line(format!(
+                "Unknown theme '{}'. Options: tokyo-night, catppuccin-mocha, gruvbox-dark, nord, solarized-dark",
+                name
+            ));
         }
     }
 
@@ -60,8 +104,11 @@ impl Helios {
 
     pub fn check_background_tasks(&mut self) {
         while let Ok(save_res) = self.save_rx.try_recv() {
-            // Check if this result is the latest save for this buffer
-            let latest_version = self.buffer_save_versions.get(&save_res.buffer_idx).copied().unwrap_or(0);
+            let latest_version = self
+                .buffer_save_versions
+                .get(&save_res.buffer_idx)
+                .copied()
+                .unwrap_or(0);
             if save_res.version >= latest_version {
                 let msg = match save_res.result {
                     Ok(s) => s,
@@ -75,25 +122,62 @@ impl Helios {
     pub fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
 
-        let layout = Layout::default()
+        let vertical_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![Constraint::Min(1), Constraint::Length(1)])
             .split(area);
 
-        // 1. Update Viewport (Mutation phase)
-        let height = (layout[0].height as usize).saturating_sub(2);
-        self.editor.update_viewport(height);
+        let main_area = vertical_layout[0];
+        let status_area = vertical_layout[1];
 
-        // 2. Render Content (Immutable render)
-        frame.render_widget(&*self, area);
+        // Horizontal split if explorer is visible
+        let (explorer_area, editor_area) = if self.explorer.is_visible {
+            let horizontal_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(vec![
+                    Constraint::Length(self.explorer.width),
+                    Constraint::Min(1),
+                ])
+                .split(main_area);
+            (Some(horizontal_layout[0]), horizontal_layout[1])
+        } else {
+            (None, main_area)
+        };
 
-        // 3. Render Cursor and manage offsets (Immutable access)
+        // 1. Update Viewports
+        let editor_height = (editor_area.height as usize).saturating_sub(2);
+        self.editor.update_viewport(editor_height);
+        if let Some(exp_area) = explorer_area {
+            let exp_height = (exp_area.height as usize).saturating_sub(2);
+            self.explorer.update_viewport(exp_height);
+        }
+
+        // 2. Render Explorer if visible
+        if let Some(exp_area) = explorer_area {
+            let is_focused = self.focused_pane == FocusedPane::Explorer;
+            frame.render_widget(
+                FileExplorerWidget {
+                    explorer: &self.explorer,
+                    theme: &self.theme,
+                    is_focused,
+                },
+                exp_area,
+            );
+        }
+
+        // 3. Render Editor
+        self.render_editor_pane(frame, editor_area);
+
+        // 4. Render Status Line
+        self.render_status_line(frame, status_area);
+
+        // 5. Render Cursor & Hover Popup
         let active_buffer = self.editor.get_active_buffer();
         let (cursor_col, cursor_line) = self.editor.get_cursor_position();
         let scroll_offset = self.editor.get_scroll_offset();
 
-        // Calculate visual cursor position relative to the viewport
-        if cursor_line >= scroll_offset && cursor_line < scroll_offset + height {
+        let mut screen_cursor = None;
+        if cursor_line >= scroll_offset && cursor_line < scroll_offset + editor_height {
             let line_text = active_buffer.text.line(cursor_line);
             use unicode_width::UnicodeWidthChar;
             let visual_col: usize = line_text
@@ -103,15 +187,138 @@ impl Helios {
                 .sum();
 
             let visual_cursor_y = cursor_line - scroll_offset;
-            let cursor_x = layout[0].x + visual_col as u16 + 1; // +1 for left border
-            let cursor_y = layout[0].y + visual_cursor_y as u16 + 1; // +1 for top border
+            let cursor_x = editor_area.x + visual_col as u16 + 1;
+            let cursor_y = editor_area.y + visual_cursor_y as u16 + 1;
 
-            if cursor_x < layout[0].x + layout[0].width - 1
-                && cursor_y < layout[0].y + layout[0].height - 1
+            if cursor_x < editor_area.x + editor_area.width - 1
+                && cursor_y < editor_area.y + editor_area.height - 1
             {
-                frame.set_cursor_position((cursor_x, cursor_y));
+                screen_cursor = Some((cursor_x, cursor_y));
+                if self.focused_pane == FocusedPane::Editor {
+                    frame.set_cursor_position((cursor_x, cursor_y));
+                }
             }
         }
+
+        // 6. Render Floating Hover Popup if active
+        if self.hover.is_visible {
+            let popup_pos = screen_cursor.unwrap_or((editor_area.x + 2, editor_area.y + 2));
+            frame.render_widget(
+                HoverPopupWidget {
+                    hover: &self.hover,
+                    theme: &self.theme,
+                    cursor_pos: popup_pos,
+                },
+                area,
+            );
+        }
+
+        // 7. Render LSP Explorer Modal if open
+        if self.lsp_registry.is_visible {
+            frame.render_widget(
+                LspExplorerWidget {
+                    registry: &self.lsp_registry,
+                    theme: &self.theme,
+                },
+                area,
+            );
+        }
+    }
+
+    fn render_editor_pane(&self, frame: &mut Frame, area: Rect) {
+        let active_buffer = self.editor.get_active_buffer();
+        let mode = self.editor.mode();
+        let state_name = format!("{}", mode);
+        let (char_pos, line_pos) = self.editor.get_cursor_position();
+
+        let mode_color = match mode {
+            Mode::Navigate => self.theme.nav_mode,
+            Mode::Edit => self.theme.edit_mode,
+            Mode::Select => self.theme.select_mode,
+            Mode::Command => self.theme.command_mode,
+        };
+
+        let border_color = if self.focused_pane == FocusedPane::Editor {
+            self.theme.border_focused
+        } else {
+            self.theme.border
+        };
+
+        let file_name = active_buffer.file_path.clone().unwrap_or_else(|| "unnamed.txt".to_string());
+        let ext = active_buffer
+            .file_path
+            .as_ref()
+            .and_then(|p| p.rsplit('.').next())
+            .unwrap_or(&active_buffer.file_format);
+
+        let file_icon = match ext {
+            "rs" => "\u{e7a8}",
+            "toml" => "\u{e6b2}",
+            "md" => "\u{e609}",
+            "json" => "\u{e60b}",
+            _ => "\u{f15b}",
+        };
+
+        let main_block = Block::bordered()
+            .title_bottom(Span::styled(format!(" {} ", state_name), Style::default().fg(mode_color)))
+            .title_top(Span::styled(
+                format!(" {} {} ({}) ", file_icon, file_name, self.theme.name),
+                Style::default().fg(self.theme.fg),
+            ))
+            .title_bottom(Span::styled(
+                format!(" {}:{} ", line_pos + 1, char_pos + 1),
+                Style::default().fg(self.theme.status_fg),
+            ))
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(self.theme.bg));
+
+        let scroll_offset = self.editor.get_scroll_offset();
+        let viewport_height = (area.height as usize).saturating_sub(2);
+
+        let ratatui_lines: Vec<Line> = (0..viewport_height)
+            .map(|i| {
+                let line_idx = scroll_offset + i;
+                let line_cow = active_buffer.text.line(line_idx);
+                let line_str = line_cow
+                    .trim_end_matches(['\n', '\r'])
+                    .replace('\t', "    ");
+
+                let spans = SyntaxHighlighter::highlight_line(&line_str, ext, &self.theme);
+                Line::from(spans)
+            })
+            .collect();
+
+        Paragraph::new(ratatui_lines)
+            .block(main_block)
+            .render(area, frame.buffer_mut());
+    }
+
+    fn render_status_line(&self, frame: &mut Frame, area: Rect) {
+        let command_text = self.editor.get_command_line();
+        let error_text = self.editor.get_error_line();
+
+        let status_widget = if !error_text.is_empty() {
+            Paragraph::new(format!(" \u{f071} {}", error_text)).style(
+                Style::default()
+                    .bg(self.theme.error_bg)
+                    .fg(self.theme.error_fg),
+            )
+        } else if !command_text.is_empty() {
+            Paragraph::new(format!(" :{}", command_text)).style(
+                Style::default()
+                    .bg(self.theme.status_bg)
+                    .fg(self.theme.status_fg),
+            )
+        } else {
+            let info = format!(" \u{f013} <Space>e: Explorer | <Space>l: LSP | K: Hover | :theme <name> | Preset: {}", self.theme.name);
+            Paragraph::new(info).style(
+                Style::default()
+                    .bg(self.theme.status_bg)
+                    .fg(self.theme.status_fg),
+            )
+        };
+
+        status_widget.render(area, frame.buffer_mut());
     }
 
     fn handle_events(&mut self) -> Result<()> {
@@ -127,6 +334,75 @@ impl Helios {
     }
 
     fn handle_key_event(&mut self, key_event: KeyEvent) {
+        // Dismiss hover window on any navigation or escape
+        if self.hover.is_visible && (key_event.code == KeyCode::Esc || self.focused_pane == FocusedPane::Editor) {
+            self.hover.hide();
+        }
+
+        // Delegate to LspManager if LSP manager has focus
+        if self.focused_pane == FocusedPane::LspManager {
+            match key_event.code {
+                KeyCode::Char('j') | KeyCode::Down => self.lsp_registry.move_down(),
+                KeyCode::Char('k') | KeyCode::Up => self.lsp_registry.move_up(),
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    if let Some((_id, _state)) = self.lsp_registry.toggle_enabled_selected() {
+                        self.config.enabled_lsps = self.lsp_registry.get_enabled_languages();
+                        let _ = self.config.save();
+                    }
+                }
+                KeyCode::Char('i') => {
+                    if let Ok(msg) = self.lsp_registry.install_selected() {
+                        self.config.enabled_lsps = self.lsp_registry.get_enabled_languages();
+                        let _ = self.config.save();
+                        self.editor.set_error_line(msg);
+                    }
+                }
+                KeyCode::Char('u') => {
+                    if let Ok(msg) = self.lsp_registry.uninstall_selected() {
+                        self.config.enabled_lsps = self.lsp_registry.get_enabled_languages();
+                        let _ = self.config.save();
+                        self.editor.set_error_line(msg);
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.lsp_registry.is_visible = false;
+                    self.focused_pane = FocusedPane::Editor;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Delegate to FileExplorer if explorer has focus
+        if self.focused_pane == FocusedPane::Explorer {
+            match key_event.code {
+                KeyCode::Char('j') | KeyCode::Down => self.explorer.move_down(),
+                KeyCode::Char('k') | KeyCode::Up => self.explorer.move_up(),
+                KeyCode::Char('h') => self.explorer.collapse_selected(),
+                KeyCode::Char('r') => self.explorer.refresh(),
+                KeyCode::Enter | KeyCode::Char('l') => {
+                    if let Some(file_path) = self.explorer.toggle_or_open_selected() {
+                        if file_path.is_file() {
+                            if let Ok(buf) = file_ops::load_file(&file_path) {
+                                self.editor.open_buffer(buf);
+                                self.focused_pane = FocusedPane::Editor;
+                            }
+                        }
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.focused_pane = FocusedPane::Editor;
+                }
+                KeyCode::Char(' ') => {
+                    // Space+e in explorer closes it
+                    self.explorer.toggle_visibility();
+                    self.focused_pane = FocusedPane::Editor;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         let action = self.editor.handle_input(key_event);
         match action {
             EditorAction::Quit | EditorAction::QuitAll => {
@@ -147,6 +423,28 @@ impl Helios {
             }
             EditorAction::EnterSelectMode => {
                 self.editor.enter_select_mode();
+            }
+            EditorAction::ToggleFileExplorer => {
+                self.explorer.toggle_visibility();
+                if self.explorer.is_visible {
+                    self.focused_pane = FocusedPane::Explorer;
+                } else {
+                    self.focused_pane = FocusedPane::Editor;
+                }
+            }
+            EditorAction::ToggleLspExplorer => {
+                self.lsp_registry.toggle_visibility();
+                if self.lsp_registry.is_visible {
+                    self.focused_pane = FocusedPane::LspManager;
+                } else {
+                    self.focused_pane = FocusedPane::Editor;
+                }
+            }
+            EditorAction::SetTheme(name) => {
+                self.set_theme(&name);
+            }
+            EditorAction::TriggerHover => {
+                self.trigger_hover();
             }
             EditorAction::Save(file_name) => {
                 let buffer_idx = self.editor.get_focused_index();
@@ -208,12 +506,64 @@ impl Helios {
             EditorAction::None => {}
         }
     }
+
+    fn trigger_hover(&mut self) {
+        let (col, line) = self.editor.get_cursor_position();
+        let buf = self.editor.get_active_buffer();
+        let line_text = buf.text.line(line);
+
+        let ext = buf
+            .file_path
+            .as_ref()
+            .and_then(|p| p.rsplit('.').next())
+            .unwrap_or(&buf.file_format);
+
+        // Extract token under cursor
+        let chars: Vec<char> = line_text.chars().collect();
+        if col < chars.len() {
+            let mut start = col;
+            while start > 0 && (chars[start - 1].is_alphanumeric() || chars[start - 1] == '_') {
+                start -= 1;
+            }
+            let mut end = col;
+            while end < chars.len() && (chars[end].is_alphanumeric() || chars[end] == '_') {
+                end += 1;
+            }
+
+            let word: String = chars[start..end].iter().collect();
+            if !word.is_empty() {
+                let docs = if let Some(keyword_docs) = self.lsp_registry.query_hover_docs(&word, ext) {
+                    keyword_docs
+                } else if !self.lsp_registry.is_lsp_enabled_for_ext(ext) {
+                    vec![
+                        format!("Symbol: {}", word),
+                        format!("LSP for '.{}' is not enabled or downloaded.", ext),
+                        "Press <Space>l to open LSP Manager and install/enable support.".to_string(),
+                    ]
+                } else {
+                    vec![
+                        format!("Symbol: {}", word),
+                        format!("Line {}, Column {}", line + 1, col + 1),
+                        "Documentation preview (LSP ready)".into(),
+                    ]
+                };
+
+                self.hover.show(format!("Doc: {}", word), docs);
+                return;
+            }
+        }
+
+        self.hover.show(
+            "Hover".to_string(),
+            vec![format!("Line: {}, Column: {}", line + 1, col + 1)],
+        );
+    }
 }
 
 pub fn initialize_app() -> Helios {
     let args: Vec<String> = std::env::args().collect();
     let initial_buffer = if let Some(file_name) = args.get(1) {
-        let path = std::path::PathBuf::from(file_name);
+        let path = PathBuf::from(file_name);
         match file_ops::load_file(&path) {
             Ok(buffer) => buffer,
             Err(_) => {
@@ -236,66 +586,4 @@ pub fn initialize_app() -> Helios {
     Helios::init(editor)
 }
 
-impl Widget for &Helios {
-    fn render(self, area: Rect, buf: &mut ratatui::buffer::Buffer) {
-        let layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Min(1), Constraint::Length(1)])
-            .split(area);
-
-        let active_buffer = self.editor.get_active_buffer();
-        let mode = self.editor.mode();
-        let state_name = format!("{}", mode);
-        let (char_pos, line_pos) = self.editor.get_cursor_position();
-
-        let state_name = match mode {
-            Mode::Navigate => state_name.white(),
-            Mode::Edit => state_name.green(),
-            Mode::Select => state_name.yellow(),
-            Mode::Command => state_name.light_red(),
-        };
-
-        let main_block = Block::bordered()
-            .title_bottom(state_name)
-            .title_top(
-                active_buffer
-                    .file_path
-                    .clone()
-                    .unwrap_or_else(|| ".txt".to_string()),
-            )
-            .title_bottom(format!("{}:{}", line_pos + 1, char_pos + 1));
-
-        let scroll_offset = self.editor.get_scroll_offset();
-        let viewport_height = (layout[0].height as usize).saturating_sub(2);
-
-        let ratatui_lines: Vec<ratatui::text::Line> = (0..viewport_height)
-            .map(|i| {
-                let line_idx = scroll_offset + i;
-                let line_cow = active_buffer.text.line(line_idx);
-                let line_str = line_cow
-                    .trim_end_matches(['\n', '\r'])
-                    .replace('\t', "    ");
-                ratatui::text::Line::from(line_str)
-            })
-            .collect();
-
-        let para = Paragraph::new(ratatui_lines);
-        para.block(main_block).render(layout[0], buf);
-
-        let command_text = self.editor.get_command_line();
-        let error_text = self.editor.get_error_line();
-
-        let status_text = if !error_text.is_empty() {
-            Paragraph::new(error_text).style(
-                ratatui::style::Style::default()
-                    .bg(ratatui::style::Color::Red)
-                    .fg(ratatui::style::Color::Black),
-            )
-        } else {
-            Paragraph::new(command_text)
-        };
-
-        status_text.block(Block::new()).render(layout[1], buf);
-    }
-}
 

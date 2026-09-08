@@ -45,6 +45,10 @@ pub enum EditorAction {
     EnterEditModeInNewLine,
     EnterSelectMode,
     EnterNavigateMode,
+    ToggleFileExplorer,
+    ToggleLspExplorer,
+    SetTheme(String),
+    TriggerHover,
     DebugPrintLinesToConsole,
     DebugPrintCurrentLineToConsole,
     AddNewBuffer,
@@ -78,6 +82,20 @@ impl Editor {
         let new_buf = HBuffer::new();
 
         self.buffers.push(new_buf);
+        self.current_focused_index = self.buffers.len() - 1;
+    }
+
+    pub fn open_buffer(&mut self, buffer: HBuffer) {
+        // Check if already open by path
+        if let Some(ref path) = buffer.file_path {
+            for (idx, b) in self.buffers.iter().enumerate() {
+                if b.file_path.as_ref() == Some(path) {
+                    self.current_focused_index = idx;
+                    return;
+                }
+            }
+        }
+        self.buffers.push(buffer);
         self.current_focused_index = self.buffers.len() - 1;
     }
 
@@ -491,6 +509,11 @@ impl Editor {
                 let file_name = tokens.get(1).map(|s| s.to_string());
                 EditorAction::SaveAndQuit(file_name)
             }
+            "colorscheme" | "theme" => {
+                let theme_name = tokens.get(1).unwrap_or(&"tokyo-night").to_string();
+                EditorAction::SetTheme(theme_name)
+            }
+            "e" | "explorer" => EditorAction::ToggleFileExplorer,
             "wel" => EditorAction::None,
             "dla" => EditorAction::DebugPrintLinesToConsole,
             "dlc" => EditorAction::DebugPrintCurrentLineToConsole,
@@ -526,9 +549,19 @@ impl Editor {
             } else {
                 self.input_seq.clear();
             }
+        } else if self.input_seq == " " {
+            self.input_seq.clear();
+            if let Char('e') = key.code {
+                return EditorAction::ToggleFileExplorer;
+            } else if let Char('l') | Char('L') = key.code {
+                return EditorAction::ToggleLspExplorer;
+            }
         }
 
         match key.code {
+            Char(' ') => {
+                self.input_seq.push(' ');
+            }
             Char('i') => action = EditorAction::EnterEditMode,
             Char('a') => {
                 self.move_cursor_right();
@@ -549,6 +582,7 @@ impl Editor {
             Char('G') => self.move_to_end_of_file(),
             Char('^') => self.move_to_line_start_non_whitespace(),
             Char('$') => self.move_to_line_end(),
+            Char('K') => action = EditorAction::TriggerHover,
             Char(':') => action = EditorAction::EnterCommandMode,
             Char('v') => action = EditorAction::EnterSelectMode,
             Char('h') => self.move_cursor_left(),
