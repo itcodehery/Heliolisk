@@ -367,15 +367,8 @@ impl Editor {
     pub fn move_to_line_end(&mut self) {
         let buffer = &mut self.buffers[self.current_focused_index];
         let line_text = buffer.text.line(buffer.cursor_line);
-        let len = line_text.chars().count();
-
-        let chars: Vec<char> = line_text.chars().collect();
-        if let Some(last) = chars.last()
-            && (*last == '\n' || *last == '\r')
-        {
-            buffer.cursor_col = if len > 1 { len - 2 } else { 0 };
-            return;
-        }
+        let trimmed = line_text.trim_end_matches(['\r', '\n']);
+        let len = trimmed.chars().count();
         buffer.cursor_col = if len > 0 { len - 1 } else { 0 };
     }
 
@@ -749,6 +742,36 @@ mod tests {
             EditorAction::None => {}
             _ => panic!("Expected None for unknown command workspace"),
         }
+    }
+
+    #[test]
+    fn test_undo_restores_cursor_position() {
+        let mut editor = Editor::new(vec![HBuffer::new()]);
+        editor.enter_edit_mode();
+        editor.insert_char('a');
+        editor.insert_char('b');
+        editor.insert_char('c');
+        assert_eq!(editor.get_cursor_position(), (3, 0));
+
+        editor.enter_navigate_mode();
+        editor.undo();
+        // After undo, cursor position should be restored to initial (0, 0)
+        assert_eq!(editor.get_cursor_position(), (0, 0));
+
+        editor.redo();
+        // After redo, cursor position should be back at (3, 0)
+        assert_eq!(editor.get_cursor_position(), (3, 0));
+    }
+
+    #[test]
+    fn test_crlf_move_to_line_end() {
+        let mut buffer = HBuffer::new();
+        buffer.text = crate::rope::HeliosRope::from_str("hello\r\nworld\r\n");
+        let mut editor = Editor::new(vec![buffer]);
+
+        editor.move_to_line_end();
+        // "hello" has 5 characters, cursor on last char 'o' should be index 4
+        assert_eq!(editor.get_cursor_position(), (4, 0));
     }
 }
 

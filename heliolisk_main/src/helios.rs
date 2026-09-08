@@ -95,10 +95,11 @@ impl Helios {
         // Calculate visual cursor position relative to the viewport
         if cursor_line >= scroll_offset && cursor_line < scroll_offset + height {
             let line_text = active_buffer.text.line(cursor_line);
+            use unicode_width::UnicodeWidthChar;
             let visual_col: usize = line_text
                 .chars()
                 .take(cursor_col)
-                .map(|c| if c == '\t' { 4 } else { 1 })
+                .map(|c| if c == '\t' { 4 } else { c.width().unwrap_or(0) })
                 .sum();
 
             let visual_cursor_y = cursor_line - scroll_offset;

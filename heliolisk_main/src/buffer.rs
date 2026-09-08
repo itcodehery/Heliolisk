@@ -1,5 +1,12 @@
 use crate::rope::HeliosRope;
 
+#[derive(Clone)]
+pub struct Snapshot {
+    pub text: HeliosRope,
+    pub cursor_line: usize,
+    pub cursor_col: usize,
+}
+
 /// Represents a single open document.
 ///
 /// Consists of lines and the document's file format as a String.
@@ -11,8 +18,8 @@ pub struct HBuffer {
     pub cursor_line: usize,
     pub cursor_col: usize,
     pub scroll_offset: usize,
-    pub undo_stack: Vec<HeliosRope>,
-    pub redo_stack: Vec<HeliosRope>,
+    pub undo_stack: Vec<Snapshot>,
+    pub redo_stack: Vec<Snapshot>,
 }
 
 impl HBuffer {
@@ -119,21 +126,39 @@ impl HBuffer {
     }
 
     pub fn save_snapshot(&mut self) {
-        self.undo_stack.push(self.text.clone());
+        self.undo_stack.push(Snapshot {
+            text: self.text.clone(),
+            cursor_line: self.cursor_line,
+            cursor_col: self.cursor_col,
+        });
         self.redo_stack.clear();
     }
 
     pub fn undo(&mut self) {
-        if let Some(prev_text) = self.undo_stack.pop() {
-            self.redo_stack.push(self.text.clone());
-            self.text = prev_text;
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(Snapshot {
+                text: self.text.clone(),
+                cursor_line: self.cursor_line,
+                cursor_col: self.cursor_col,
+            });
+            self.text = prev.text;
+            self.cursor_line = prev.cursor_line;
+            self.cursor_col = prev.cursor_col;
+            self.clamp_cursor();
         }
     }
 
     pub fn redo(&mut self) {
-        if let Some(next_text) = self.redo_stack.pop() {
-            self.undo_stack.push(self.text.clone());
-            self.text = next_text;
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(Snapshot {
+                text: self.text.clone(),
+                cursor_line: self.cursor_line,
+                cursor_col: self.cursor_col,
+            });
+            self.text = next.text;
+            self.cursor_line = next.cursor_line;
+            self.cursor_col = next.cursor_col;
+            self.clamp_cursor();
         }
     }
 }
