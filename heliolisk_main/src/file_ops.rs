@@ -71,7 +71,5 @@ pub fn load_file(file_path: &PathBuf) -> Result<HBuffer, String> {
         redo_stack: Vec::new(),
     };
 
-    dbg!(buffer.text.len_lines());
-
     Ok(buffer)
 }

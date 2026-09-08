@@ -57,7 +57,6 @@ pub enum EditorAction {
 
 impl Editor {
     pub fn new(buffers: Vec<HBuffer>) -> Self {
-        dbg!("Helios: New Editor Created with Buffer!");
         Self {
             buffers,
             current_focused_index: 0,
@@ -78,7 +77,6 @@ impl Editor {
     }
 
     pub fn add_new_buffer(&mut self) {
-        dbg!("Adding new Buffer");
         let new_buf = HBuffer::new();
 
         self.buffers.push(new_buf);
@@ -95,6 +93,18 @@ impl Editor {
                 }
             }
         }
+
+        // If the current buffer is the single initial empty untitled buffer, replace it
+        if self.buffers.len() == 1
+            && self.buffers[0].file_path.is_none()
+            && self.buffers[0].text.len_chars() == 0
+            && self.buffers[0].undo_stack.is_empty()
+        {
+            self.buffers[0] = buffer;
+            self.current_focused_index = 0;
+            return;
+        }
+
         self.buffers.push(buffer);
         self.current_focused_index = self.buffers.len() - 1;
     }
@@ -806,6 +816,33 @@ mod tests {
         editor.move_to_line_end();
         // "hello" has 5 characters, cursor on last char 'o' should be index 4
         assert_eq!(editor.get_cursor_position(), (4, 0));
+    }
+
+    #[test]
+    fn test_open_buffer_replaces_empty_and_reuses_existing() {
+        let mut editor = Editor::new(vec![HBuffer::new()]);
+        assert_eq!(editor.buffers.len(), 1);
+
+        // Open first real buffer
+        let mut buf1 = HBuffer::new();
+        buf1.file_path = Some("file1.rs".to_string());
+        editor.open_buffer(buf1);
+        assert_eq!(editor.buffers.len(), 1);
+        assert_eq!(editor.buffers[0].file_path.as_deref(), Some("file1.rs"));
+
+        // Open second buffer
+        let mut buf2 = HBuffer::new();
+        buf2.file_path = Some("file2.rs".to_string());
+        editor.open_buffer(buf2);
+        assert_eq!(editor.buffers.len(), 2);
+        assert_eq!(editor.current_focused_index, 1);
+
+        // Open file1.rs again - should jump back to index 0 without duplicating
+        let mut buf1_again = HBuffer::new();
+        buf1_again.file_path = Some("file1.rs".to_string());
+        editor.open_buffer(buf1_again);
+        assert_eq!(editor.buffers.len(), 2);
+        assert_eq!(editor.current_focused_index, 0);
     }
 }
 

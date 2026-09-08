@@ -51,7 +51,6 @@ pub struct Helios {
 
 impl Helios {
     pub fn init(editor: Editor) -> Self {
-        dbg!("Helios: Initialized Editor State");
         let (save_tx, save_rx) = mpsc::channel();
         let config = HelioliskConfig::load();
         let theme_preset = ThemePreset::from_name(&config.theme).unwrap_or(ThemePreset::TokyoNight);

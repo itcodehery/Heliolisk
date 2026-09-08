@@ -24,7 +24,6 @@ pub struct HBuffer {
 
 impl HBuffer {
     pub fn new() -> Self {
-        dbg!("Helios: New Buffer Created!");
         Self {
             text: HeliosRope::new(),
             file_format: ".txt".to_string(),

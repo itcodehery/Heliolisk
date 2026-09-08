@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Clear, Paragraph, Widget},
+    widgets::{Block, Clear, Paragraph, Wrap, Widget},
 };
 
 use crate::config::Theme;
@@ -20,9 +20,9 @@ impl<'a> Widget for LspExplorerWidget<'a> {
             return;
         }
 
-        // Center modal layout
-        let popup_width = (area.width * 4 / 5).clamp(60, 95);
-        let popup_height = (area.height * 4 / 5).clamp(18, 28);
+        // Expanded responsive modal layout to comfortably accommodate URLs, commands & keybinds
+        let popup_width = (area.width.saturating_sub(6)).clamp(70, 115);
+        let popup_height = (area.height.saturating_sub(4)).clamp(22, 34);
 
         let popup_x = area.x + (area.width.saturating_sub(popup_width)) / 2;
         let popup_y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -38,10 +38,10 @@ impl<'a> Widget for LspExplorerWidget<'a> {
         let inner = block.inner(popup_rect);
         block.render(popup_rect, buf);
 
-        // Split into: [Server List (left)] and [Server Details (right)]
+        // Responsive split: list fixed at 36 chars, details pane gets all remaining width
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .constraints([Constraint::Length(36), Constraint::Min(35)])
             .split(inner);
 
         let list_area = chunks[0];
@@ -50,7 +50,7 @@ impl<'a> Widget for LspExplorerWidget<'a> {
         // 1. Render Server List
         let mut list_lines = Vec::new();
         list_lines.push(Line::from(vec![
-            Span::styled("  STATUS  ", Style::default().fg(self.theme.comment)),
+            Span::styled(" STATUS ", Style::default().fg(self.theme.comment)),
             Span::styled("LANGUAGE / SERVER", Style::default().fg(self.theme.comment).add_modifier(Modifier::BOLD)),
         ]));
         list_lines.push(Line::from(""));
@@ -82,8 +82,8 @@ impl<'a> Widget for LspExplorerWidget<'a> {
             }
 
             list_lines.push(Line::from(vec![
-                Span::styled(format!("{}{:<8} ", prefix, status_icon), Style::default().fg(status_color)),
-                Span::styled(format!("{:<12} ({})", server.name, server.language), style),
+                Span::styled(format!("{}{:<7} ", prefix, status_icon), Style::default().fg(status_color)),
+                Span::styled(format!("{:<10} ({})", server.name, server.language), style),
             ]));
         }
 
@@ -136,13 +136,27 @@ impl<'a> Widget for LspExplorerWidget<'a> {
             ]));
         }
 
-        // Instructions footer
+        // Instructions footer formatted cleanly across lines without truncation
         detail_lines.push(Line::from(""));
         detail_lines.push(Line::from(vec![
             Span::styled("Keybinds:", Style::default().fg(self.theme.comment).add_modifier(Modifier::BOLD)),
         ]));
-        detail_lines.push(Line::from("  [Enter/Space] Toggle ON/OFF  |  [i] Download/Install"));
-        detail_lines.push(Line::from("  [u] Uninstall/Remove         |  [Esc/q] Close Explorer"));
+        detail_lines.push(Line::from(vec![
+            Span::styled("  [Enter / Space] ", Style::default().fg(self.theme.function)),
+            Span::styled("Toggle ON / OFF", Style::default().fg(self.theme.fg)),
+        ]));
+        detail_lines.push(Line::from(vec![
+            Span::styled("  [i]             ", Style::default().fg(self.theme.function)),
+            Span::styled("Download & Install from repo", Style::default().fg(self.theme.fg)),
+        ]));
+        detail_lines.push(Line::from(vec![
+            Span::styled("  [u]             ", Style::default().fg(self.theme.function)),
+            Span::styled("Uninstall & Remove from cache", Style::default().fg(self.theme.fg)),
+        ]));
+        detail_lines.push(Line::from(vec![
+            Span::styled("  [Esc / q]       ", Style::default().fg(self.theme.function)),
+            Span::styled("Close LSP Manager", Style::default().fg(self.theme.fg)),
+        ]));
 
         if let Some(msg) = &self.registry.status_message {
             detail_lines.push(Line::from(""));
@@ -156,6 +170,9 @@ impl<'a> Widget for LspExplorerWidget<'a> {
             .border_style(Style::default().fg(self.theme.border));
         let detail_inner = detail_block.inner(detail_area);
         detail_block.render(detail_area, buf);
-        Paragraph::new(detail_lines).render(detail_inner, buf);
+        Paragraph::new(detail_lines)
+            .wrap(Wrap { trim: true })
+            .render(detail_inner, buf);
     }
 }
+
