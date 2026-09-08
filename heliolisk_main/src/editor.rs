@@ -160,6 +160,10 @@ impl Editor {
         &self.buffers
     }
 
+    pub fn get_focused_index(&self) -> usize {
+        self.current_focused_index
+    }
+
     pub fn get_active_buffer(&self) -> &HBuffer {
         &self.buffers[self.current_focused_index]
     }
@@ -478,34 +482,26 @@ impl Editor {
 
     pub fn execute_command(&mut self, cmd: &str) -> EditorAction {
         self.clear_command_line();
-        match cmd {
+        let tokens: Vec<&str> = cmd.split_whitespace().collect();
+        if tokens.is_empty() {
+            return EditorAction::None;
+        }
+
+        match tokens[0] {
             "q" => EditorAction::Quit,
             "qa" => EditorAction::QuitAll,
+            "w" => {
+                let file_name = tokens.get(1).map(|s| s.to_string());
+                EditorAction::Save(file_name)
+            }
+            "wq" => {
+                let file_name = tokens.get(1).map(|s| s.to_string());
+                EditorAction::SaveAndQuit(file_name)
+            }
             "wel" => EditorAction::None,
             "dla" => EditorAction::DebugPrintLinesToConsole,
             "dlc" => EditorAction::DebugPrintCurrentLineToConsole,
-            _ => {
-                if cmd.starts_with("w") || cmd.starts_with("wq") {
-                    let splits = cmd.split(' ');
-
-                    if cmd.starts_with("wq") {
-                        if splits.clone().count() == 2 {
-                            return EditorAction::SaveAndQuit(Some(
-                                splits.last().unwrap().to_string(),
-                            ));
-                        } else {
-                            return EditorAction::SaveAndQuit(None);
-                        }
-                    }
-                    if splits.clone().count() == 2 {
-                        EditorAction::Save(Some(splits.last().unwrap().to_string()))
-                    } else {
-                        EditorAction::Save(None)
-                    }
-                } else {
-                    EditorAction::None
-                }
-            }
+            _ => EditorAction::None,
         }
     }
 
@@ -724,6 +720,35 @@ mod tests {
         editor.buffer_switch_forward();
         assert_eq!(editor.get_cursor_position(), (3, 1));
         assert_eq!(editor.get_scroll_offset(), 0);
+    }
+
+    #[test]
+    fn test_execute_command_parsing() {
+        let mut editor = Editor::new(vec![HBuffer::new()]);
+
+        // Test :w with custom name and whitespace
+        match editor.execute_command("  w   test_file.rs  ") {
+            EditorAction::Save(Some(name)) => assert_eq!(name, "test_file.rs"),
+            _ => panic!("Expected Save with test_file.rs"),
+        }
+
+        // Test :w without filename
+        match editor.execute_command("w") {
+            EditorAction::Save(None) => {}
+            _ => panic!("Expected Save with None"),
+        }
+
+        // Test :wq with filename
+        match editor.execute_command("wq out.txt") {
+            EditorAction::SaveAndQuit(Some(name)) => assert_eq!(name, "out.txt"),
+            _ => panic!("Expected SaveAndQuit with out.txt"),
+        }
+
+        // Test that commands starting with 'w' but not 'w' or 'wq' are NOT mistaken for save
+        match editor.execute_command("workspace") {
+            EditorAction::None => {}
+            _ => panic!("Expected None for unknown command workspace"),
+        }
     }
 }
 

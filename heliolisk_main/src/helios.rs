@@ -15,12 +15,19 @@ use crate::{
     file_ops,
 };
 
+pub struct SaveResult {
+    pub buffer_idx: usize,
+    pub version: u64,
+    pub result: std::result::Result<String, String>,
+}
+
 /// The Global App State for Heliolisk
 pub struct Helios {
     editor: Editor,
     should_quit: bool,
-    save_tx: Sender<std::result::Result<String, String>>,
-    save_rx: Receiver<std::result::Result<String, String>>,
+    buffer_save_versions: std::collections::HashMap<usize, u64>,
+    save_tx: Sender<SaveResult>,
+    save_rx: Receiver<SaveResult>,
 }
 
 impl Helios {
@@ -30,6 +37,7 @@ impl Helios {
         Self {
             editor,
             should_quit: false,
+            buffer_save_versions: std::collections::HashMap::new(),
             save_tx,
             save_rx,
         }
@@ -51,12 +59,16 @@ impl Helios {
     }
 
     pub fn check_background_tasks(&mut self) {
-        while let Ok(res) = self.save_rx.try_recv() {
-            let msg = match res {
-                Ok(s) => s,
-                Err(e) => format!("Error: {}", e),
-            };
-            self.editor.set_error_line(msg);
+        while let Ok(save_res) = self.save_rx.try_recv() {
+            // Check if this result is the latest save for this buffer
+            let latest_version = self.buffer_save_versions.get(&save_res.buffer_idx).copied().unwrap_or(0);
+            if save_res.version >= latest_version {
+                let msg = match save_res.result {
+                    Ok(s) => s,
+                    Err(e) => format!("Error: {}", e),
+                };
+                self.editor.set_error_line(msg);
+            }
         }
     }
 
@@ -136,6 +148,7 @@ impl Helios {
                 self.editor.enter_select_mode();
             }
             EditorAction::Save(file_name) => {
+                let buffer_idx = self.editor.get_focused_index();
                 let current_path = self.editor.get_active_buffer().file_path.clone();
                 let effective_name = file_name
                     .or(current_path)
@@ -146,20 +159,25 @@ impl Helios {
                 let buffer_clone = self.editor.get_active_buffer().clone();
                 let tx = self.save_tx.clone();
 
+                let version_entry = self.buffer_save_versions.entry(buffer_idx).or_insert(0);
+                *version_entry += 1;
+                let version = *version_entry;
+
                 self.editor.set_error_line("Saving in background...".to_string());
 
                 std::thread::spawn(move || {
-                    match file_ops::write_buffer_to_file(
+                    let result = match file_ops::write_buffer_to_file(
                         &buffer_clone,
                         Some(effective_name.clone()),
                     ) {
-                        Ok(_) => {
-                            let _ = tx.send(Ok(format!("Saved {}", effective_name)));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Err(format!("Save failed: {}", e)));
-                        }
-                    }
+                        Ok(_) => Ok(format!("Saved {}", effective_name)),
+                        Err(e) => Err(format!("Save failed: {}", e)),
+                    };
+                    let _ = tx.send(SaveResult {
+                        buffer_idx,
+                        version,
+                        result,
+                    });
                 });
             }
             EditorAction::SaveAndQuit(file_name) => {

@@ -22,7 +22,10 @@ pub fn write_buffer_to_file(bf: &HBuffer, file_name: Option<String>) -> Result<(
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
     let file_stem = file_path.file_name().unwrap_or_default().to_string_lossy();
-    let temp_name = format!(".{}.tmp", file_stem);
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp_name = format!(".{}.{}_{}.tmp", file_stem, std::process::id(), count);
     let temp_path = parent.join(temp_name);
 
     let file = File::create(&temp_path).map_err(|e| e.to_string())?;
